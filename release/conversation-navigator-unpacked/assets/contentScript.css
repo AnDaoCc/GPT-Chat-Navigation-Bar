@@ -297,6 +297,9 @@
 #conversation-navigator-root .cnav-number-field {
   grid-template-columns: 86px minmax(0, 1fr);
 }
+#conversation-navigator-root .cnav-model-field {
+  grid-template-columns: 86px minmax(0, 1fr) 58px;
+}
 #conversation-navigator-root .cnav-language-field select {
   width: 100%;
   height: 30px;
@@ -652,6 +655,7 @@
   }
 }
 #conversation-navigator-root .cnav-select-field select,
+#conversation-navigator-root .cnav-model-field select,
 #conversation-navigator-root .cnav-number-field input {
   width: 100%;
   height: 30px;
@@ -667,9 +671,34 @@
     background-color 180ms var(--cnav-ease);
 }
 #conversation-navigator-root .cnav-select-field select:focus,
+#conversation-navigator-root .cnav-model-field select:focus,
 #conversation-navigator-root .cnav-number-field input:focus {
   border-color: color-mix(in srgb, var(--cnav-accent) 65%, var(--cnav-border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cnav-accent) 18%, transparent);
+}
+#conversation-navigator-root .cnav-sync-button {
+  width: 58px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--cnav-accent) 34%, var(--cnav-border));
+  border-radius: var(--cnav-radius);
+  background: var(--cnav-accent-soft);
+  color: var(--cnav-accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 750;
+  transition:
+    background-color 180ms var(--cnav-ease),
+    color 180ms var(--cnav-ease),
+    transform 180ms var(--cnav-ease-emphasized);
+}
+#conversation-navigator-root .cnav-sync-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cnav-accent) 18%, transparent);
+  transform: translateY(-1px);
+}
+#conversation-navigator-root .cnav-sync-button:disabled {
+  cursor: wait;
+  opacity: 0.64;
 }
 #conversation-navigator-root .cnav-token-panel,
 #conversation-navigator-root .cnav-minimap {
@@ -910,7 +939,9 @@
 #conversation-navigator-root .cnav-minimap-page-edge {
   position: fixed;
   z-index: 2147483644;
+  width: 16px;
   opacity: 0.72;
+  pointer-events: none;
   transition: opacity 180ms var(--cnav-ease), transform 220ms var(--cnav-ease-emphasized);
 }
 #conversation-navigator-root .cnav-minimap-page-edge:hover {
@@ -939,6 +970,7 @@
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(12px) saturate(1.08);
   cursor: ns-resize;
+  pointer-events: auto;
 }
 #conversation-navigator-root .cnav-minimap-viewport {
   position: absolute;
@@ -954,9 +986,9 @@
 }
 #conversation-navigator-root .cnav-minimap-block {
   position: absolute;
-  right: 6px;
-  left: 6px;
-  min-height: 3px;
+  right: 5px;
+  left: 5px;
+  min-height: 2px;
   border: 0;
   border-radius: 999px;
   background: var(--map-mixed);
@@ -978,8 +1010,8 @@
   opacity: 0.9;
 }
 #conversation-navigator-root .cnav-minimap-block.is-active {
-  right: 4px;
-  left: 4px;
+  right: 3px;
+  left: 3px;
   opacity: 1;
   transform: scaleX(1.35);
 }
@@ -995,8 +1027,8 @@
 }
 #conversation-navigator-root .cnav-minimap-block.is-heat-2,
 #conversation-navigator-root .cnav-minimap-block.is-heat-3 {
-  right: 4px;
-  left: 4px;
+  right: 3px;
+  left: 3px;
   background: #f59e0b;
   opacity: 0.94;
 }

@@ -8,12 +8,13 @@ Local-only MV3 extension that injects a React sidebar into ChatGPT pages.
 - Adds a scrollable right-side navigator with clickable anchors.
 - Supports search, collapse, favorites, manual refresh, and active-node highlighting.
 - Adds a local Token / Context estimate panel powered by `js-tiktoken` with floating and docked modes.
+- Supports model-based token budgets with an online model catalog sync plus manual 32k/128k/200k/400k/1M/2M presets.
 - Adds a VS Code-style message minimap with page-edge and docked modes.
 - Adapts to ChatGPT light and dark themes.
 - Supports Simplified Chinese, Traditional Chinese, and English UI.
 - Lets you choose the local cache target: extension `chrome.storage.local`, ChatGPT page `localStorage`, or no persistent cache.
 - Does not read hidden system prompts, hidden memory, or server-side safety layers.
-- Does not call ChatGPT, OpenAI APIs, or third-party services.
+- Does not call ChatGPT or OpenAI APIs. Optional model sync only downloads model-budget metadata.
 
 ## Permissions
 
@@ -21,6 +22,8 @@ Local-only MV3 extension that injects a React sidebar into ChatGPT pages.
 - Host permissions are limited to:
   - `https://chat.openai.com/*`
   - `https://chatgpt.com/*`
+  - `https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json`
+  - `https://platform.openai.com/docs/models*`
 
 The extension does not request `tabs`, `webRequest`, or `<all_urls>`.
 

@@ -7725,7 +7725,8 @@
     tokenPanelEnabled: true,
     tokenPanelMode: "floating",
     tokenPanelCollapsed: false,
-    tokenBudgetMode: "auto",
+    tokenBudgetMode: "model",
+    tokenModelId: "chatgpt-auto",
     manualTokenBudget: 128e3,
     tokenHudX: 0,
     tokenHudY: 0,
@@ -7747,7 +7748,7 @@
     const cacheMode = value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
     const language = value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
     const tokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
-    const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "auto";
+    const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
     const minimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
     const isCurrentLayout = value?.chatLayoutVersion === 2;
     return {
@@ -7764,7 +7765,8 @@
       tokenPanelMode,
       tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
       tokenBudgetMode,
-      manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 1e6, 128e3)),
+      tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim() ? value.tokenModelId.trim().slice(0, 80) : "chatgpt-auto",
+      manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 2e6, 128e3)),
       tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 1e4, 0)),
       tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0)),
       minimapEnabled: value?.minimapEnabled !== false,
@@ -7835,8 +7837,15 @@
       tokenTotal: "\u603B\u91CF",
       tokenViewport: "\u5F53\u524D\u7A97\u53E3",
       tokenBudget: "\u9884\u7B97",
-      tokenBudgetAuto: "\u81EA\u52A8",
+      tokenBudgetAuto: "\u6309 GPT \u6A21\u578B",
+      tokenBudgetModel: "\u6A21\u578B\u9884\u7B97",
       tokenBudgetCustom: "\u81EA\u5B9A\u4E49",
+      tokenModel: "GPT \u6A21\u578B",
+      tokenModelAuto: "\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u6A21\u578B",
+      tokenModelSync: "\u540C\u6B65",
+      tokenModelSyncing: "\u540C\u6B65\u4E2D",
+      tokenModelSynced: "\u5DF2\u540C\u6B65",
+      tokenModelSyncFailed: "\u540C\u6B65\u5931\u8D25",
       tokenManualBudget: "\u624B\u52A8\u9884\u7B97",
       tokenModelUnknown: "\u6A21\u578B\u672A\u77E5",
       tokenUserShare: "\u7528\u6237",
@@ -7904,8 +7913,15 @@
       tokenTotal: "\u7E3D\u91CF",
       tokenViewport: "\u76EE\u524D\u8996\u7A97",
       tokenBudget: "\u9810\u7B97",
-      tokenBudgetAuto: "\u81EA\u52D5",
+      tokenBudgetAuto: "\u4F9D GPT \u6A21\u578B",
+      tokenBudgetModel: "\u6A21\u578B\u9810\u7B97",
       tokenBudgetCustom: "\u81EA\u8A02",
+      tokenModel: "GPT \u6A21\u578B",
+      tokenModelAuto: "\u81EA\u52D5\u8B58\u5225\u76EE\u524D\u6A21\u578B",
+      tokenModelSync: "\u540C\u6B65",
+      tokenModelSyncing: "\u540C\u6B65\u4E2D",
+      tokenModelSynced: "\u5DF2\u540C\u6B65",
+      tokenModelSyncFailed: "\u540C\u6B65\u5931\u6557",
       tokenManualBudget: "\u624B\u52D5\u9810\u7B97",
       tokenModelUnknown: "\u6A21\u578B\u672A\u77E5",
       tokenUserShare: "\u4F7F\u7528\u8005",
@@ -7973,8 +7989,15 @@
       tokenTotal: "Total",
       tokenViewport: "Current window",
       tokenBudget: "Budget",
-      tokenBudgetAuto: "Auto",
+      tokenBudgetAuto: "By GPT model",
+      tokenBudgetModel: "Model budget",
       tokenBudgetCustom: "Custom",
+      tokenModel: "GPT model",
+      tokenModelAuto: "Auto-detect current model",
+      tokenModelSync: "Sync",
+      tokenModelSyncing: "Syncing",
+      tokenModelSynced: "Synced",
+      tokenModelSyncFailed: "Sync failed",
       tokenManualBudget: "Manual budget",
       tokenModelUnknown: "Unknown model",
       tokenUserShare: "User",
@@ -7998,6 +8021,7 @@
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var ROOT_ID = "conversation-navigator-root";
   var ANCHOR_ATTR = "data-conversation-navigator-id";
+  var MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
   var SCAN_DEBOUNCE_MS = 350;
   var CHAT_STYLE_ID = "conversation-navigator-chat-style";
   var OFFICIAL_THREAD_WIDTH = 60;
@@ -8005,9 +8029,11 @@
   var THREAD_WIDTH_MAX = 100;
   var DEFAULT_TOKEN_BUDGET = 128e3;
   var TOKEN_CACHE_LIMIT = 900;
+  var MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1e3;
   var MINIMAP_MAX_BLOCKS = 220;
   var DEFAULT_HUD_WIDTH = 246;
   var DEFAULT_HUD_GAP = 26;
+  var EDGE_MINIMAP_RIGHT_GAP = 72;
   var TEXT_CONTROL_SELECTOR = [
     "button",
     '[role="button"]',
@@ -8030,6 +8056,90 @@
   var tokenKeyQueue = [];
   var nextNodeAnchorIndex = 1;
   var tokenizer = null;
+  var BUILT_IN_MODEL_BUDGETS = [
+    {
+      id: "chatgpt-auto",
+      label: "Auto current GPT",
+      budget: DEFAULT_TOKEN_BUDGET,
+      source: "built-in",
+      aliases: ["auto", "instant", "current model", "chatgpt"]
+    },
+    {
+      id: "gpt-5.2",
+      label: "GPT-5.2",
+      budget: 4e5,
+      source: "built-in",
+      aliases: ["gpt-5.2", "gpt 5.2"]
+    },
+    {
+      id: "gpt-5.1",
+      label: "GPT-5.1",
+      budget: 4e5,
+      source: "built-in",
+      aliases: ["gpt-5.1", "gpt 5.1"]
+    },
+    {
+      id: "gpt-5",
+      label: "GPT-5",
+      budget: 4e5,
+      source: "built-in",
+      aliases: ["gpt-5", "gpt 5"]
+    },
+    {
+      id: "gpt-5-chat",
+      label: "GPT-5 Chat",
+      budget: 128e3,
+      source: "built-in",
+      aliases: ["gpt-5 chat", "gpt-5-chat-latest", "gpt 5 chat"]
+    },
+    {
+      id: "gpt-4.1",
+      label: "GPT-4.1",
+      budget: 1047576,
+      source: "built-in",
+      aliases: ["gpt-4.1", "gpt 4.1", "gpt-4.1-mini", "gpt-4.1-nano"]
+    },
+    {
+      id: "gpt-4o",
+      label: "GPT-4o",
+      budget: 128e3,
+      source: "built-in",
+      aliases: ["gpt-4o", "gpt 4o", "4o", "gpt-4o-mini"]
+    },
+    {
+      id: "o-series",
+      label: "o3 / o4",
+      budget: 2e5,
+      source: "built-in",
+      aliases: ["o3", "o4", "o4-mini", "o3-mini", "o1", "o1-pro"]
+    },
+    {
+      id: "gpt-4-turbo",
+      label: "GPT-4 Turbo",
+      budget: 128e3,
+      source: "built-in",
+      aliases: ["gpt-4-turbo", "gpt 4 turbo", "gpt-4-turbo-preview"]
+    },
+    {
+      id: "gpt-4",
+      label: "GPT-4",
+      budget: 32e3,
+      source: "built-in",
+      aliases: ["gpt-4", "gpt 4", "gpt-4-32k"]
+    },
+    {
+      id: "gpt-3.5",
+      label: "GPT-3.5",
+      budget: 16e3,
+      source: "built-in",
+      aliases: ["gpt-3.5", "gpt 3.5", "gpt-3.5-turbo"]
+    }
+  ];
+  var OPENAI_MODEL_SYNC_URLS = [
+    "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
+    "https://platform.openai.com/docs/models",
+    "https://platform.openai.com/docs/models/compare"
+  ];
   var CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chat.openai.com", "chatgpt.com"]);
   var siteAdapters = [
     {
@@ -8697,20 +8807,114 @@
     }
     return "";
   }
-  function inferAutoTokenBudget(modelLabel) {
-    const label = modelLabel.toLowerCase();
-    if (/\b(gpt-5|gpt-4\.1|o3|o4|200k)\b/.test(label)) {
-      return 2e5;
+  function parseBudgetText(value) {
+    const normalized = value.replace(/,/g, "").trim().toLowerCase();
+    const million = normalized.match(/^(\d+(?:\.\d+)?)\s*m$/);
+    if (million) {
+      return Math.round(Number(million[1]) * 1e6);
     }
-    if (/\b(gpt-4o|gpt-4\.5|o1|128k)\b/.test(label)) {
-      return 128e3;
+    const thousand = normalized.match(/^(\d+(?:\.\d+)?)\s*k$/);
+    if (thousand) {
+      return Math.round(Number(thousand[1]) * 1e3);
     }
-    if (/\b(32k|gpt-4(?!o)|gpt-3\.5)\b/.test(label)) {
-      return 32e3;
-    }
-    return DEFAULT_TOKEN_BUDGET;
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) && numeric >= 8e3 ? Math.round(numeric) : null;
   }
-  function getTokenBudget(settings, modelLabel = detectModelLabel()) {
+  function parseModelBudgetFromDocs(text, model) {
+    const normalized = text.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const lower = normalized.toLowerCase();
+    for (const alias of [model.label, ...model.aliases]) {
+      const index = lower.indexOf(alias.toLowerCase());
+      if (index < 0) {
+        continue;
+      }
+      const snippet = normalized.slice(Math.max(0, index - 500), index + 1400);
+      const contextMatch = snippet.match(/((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])\s*(?:token[s]?\s*)?(?:context|context window|window)/i) ?? snippet.match(/(?:context|context window|window)[^0-9]{0,80}((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])/i);
+      if (!contextMatch?.[1]) {
+        continue;
+      }
+      const parsed = parseBudgetText(contextMatch[1]);
+      if (parsed) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+  function parseOnlineModelCatalog(text) {
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed.models)) {
+        return [];
+      }
+      const models = [];
+      for (const model of parsed.models) {
+        const budget = Number(model.budget);
+        if (!model.id || !model.label || !Number.isFinite(budget) || budget < 8e3) {
+          continue;
+        }
+        models.push({
+          id: String(model.id),
+          label: String(model.label),
+          budget: Math.round(budget),
+          source: "openai",
+          aliases: Array.isArray(model.aliases) ? model.aliases.map((alias) => String(alias)) : [String(model.label)]
+        });
+      }
+      return models;
+    } catch {
+      return [];
+    }
+  }
+  async function fetchTextWithTimeout(url, timeoutMs = 8e3) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        credentials: "omit",
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return await response.text();
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+  function mergeModelCatalog(models) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const model of [...BUILT_IN_MODEL_BUDGETS, ...models]) {
+      const existing = byId.get(model.id);
+      byId.set(model.id, existing ? { ...existing, ...model } : model);
+    }
+    return Array.from(byId.values());
+  }
+  async function syncOpenAiModelCatalog() {
+    const pages = await Promise.allSettled(OPENAI_MODEL_SYNC_URLS.map((url) => fetchTextWithTimeout(url)));
+    const fetchedText = pages.filter((result) => result.status === "fulfilled").map((result) => result.value);
+    const onlineModels = fetchedText.flatMap(parseOnlineModelCatalog);
+    const joined = fetchedText.join("\n");
+    if (!joined && onlineModels.length === 0) {
+      throw new Error("No OpenAI model docs fetched");
+    }
+    const synced = BUILT_IN_MODEL_BUDGETS.map((model) => {
+      const parsed = model.id === "chatgpt-auto" ? null : parseModelBudgetFromDocs(joined, model);
+      return parsed ? { ...model, budget: parsed, source: "openai" } : model;
+    });
+    return mergeModelCatalog([...synced, ...onlineModels]);
+  }
+  function findModelBudget(modelCatalog, modelId) {
+    return modelCatalog.find((model) => model.id === modelId);
+  }
+  function detectModelBudget(modelCatalog, modelLabel) {
+    const label = modelLabel.toLowerCase();
+    if (!label) {
+      return void 0;
+    }
+    return modelCatalog.filter((model) => model.id !== "chatgpt-auto").find((model) => model.aliases.some((alias) => label.includes(alias.toLowerCase())));
+  }
+  function getTokenBudget(settings, modelLabel = detectModelLabel(), modelCatalog = BUILT_IN_MODEL_BUDGETS) {
     if (settings.tokenBudgetMode === "manual") {
       return {
         budget: settings.manualTokenBudget,
@@ -8718,15 +8922,16 @@
         budgetLabel: `${formatTokenCount(settings.manualTokenBudget)}`
       };
     }
-    const budget = inferAutoTokenBudget(modelLabel);
+    const selectedModel = settings.tokenModelId === "chatgpt-auto" ? detectModelBudget(modelCatalog, modelLabel) : findModelBudget(modelCatalog, settings.tokenModelId);
+    const budget = selectedModel?.budget ?? DEFAULT_TOKEN_BUDGET;
     return {
       budget,
-      budgetSource: "auto",
-      budgetLabel: `${formatTokenCount(budget)} auto`
+      budgetSource: "model",
+      budgetLabel: `${selectedModel?.label ?? "GPT"} ${formatTokenCount(budget)}`
     };
   }
-  function buildTokenStats(entries, viewport, settings, modelLabel) {
-    const budgetInfo = getTokenBudget(settings, modelLabel);
+  function buildTokenStats(entries, viewport, settings, modelLabel, modelCatalog) {
+    const budgetInfo = getTokenBudget(settings, modelLabel, modelCatalog);
     return {
       total: entries.reduce((sum, entry) => sum + entry.tokenCount, 0),
       viewport: viewport.tokenCount,
@@ -8791,9 +8996,18 @@
     for (let index = 0; index < entries.length; index += chunkSize) {
       const chunk = entries.slice(index, index + chunkSize);
       const first = chunk[0];
+      const firstElement = anchorRegistry.get(first.id);
+      const documentHeight = Math.max(
+        window.innerHeight,
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+      const firstRect = firstElement?.getBoundingClientRect();
+      const topFromDom = firstRect ? (firstRect.top + window.scrollY) / documentHeight * 100 : null;
+      const heightFromDom = firstRect ? Math.min(9, Math.max(0.45, firstRect.height / documentHeight * 100)) : null;
       const role = chunk.every((entry) => entry.role === first.role) ? first.role : "mixed";
-      const top = index / entries.length * 100;
-      const height = Math.max(1.4, chunk.length / entries.length * 100);
+      const top = topFromDom ?? index / entries.length * 100;
+      const height = heightFromDom ?? Math.max(0.8, chunk.length / entries.length * 100);
       const heatLevel = Math.max(...chunk.map((entry) => entry.heatLevel));
       const queryMatch = Boolean(normalizedQuery) && chunk.some((entry) => entry.text.toLowerCase().includes(normalizedQuery));
       blocks.push({
@@ -8835,9 +9049,13 @@
       heightRatio: 0
     });
     const [tokenHudDraft, setTokenHudDraft] = (0, import_react3.useState)(null);
+    const [modelCatalog, setModelCatalog] = (0, import_react3.useState)(BUILT_IN_MODEL_BUDGETS);
+    const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = (0, import_react3.useState)(0);
+    const [modelSyncStatus, setModelSyncStatus] = (0, import_react3.useState)("idle");
     const favoritesRef = (0, import_react3.useRef)(favorites);
     const pageKeyRef = (0, import_react3.useRef)(pageKey);
     const settingsRef = (0, import_react3.useRef)(settings);
+    const modelCatalogRef = (0, import_react3.useRef)(modelCatalog);
     const listRef = (0, import_react3.useRef)(null);
     const revealLatestOnNextPaintRef = (0, import_react3.useRef)(true);
     const openingTimerRef = (0, import_react3.useRef)(void 0);
@@ -8845,8 +9063,9 @@
     favoritesRef.current = favorites;
     pageKeyRef.current = pageKey;
     settingsRef.current = settings;
+    modelCatalogRef.current = modelCatalog;
     const scan = (0, import_react3.useCallback)(async () => {
-      const { budget } = getTokenBudget(settingsRef.current);
+      const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
       const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
         favoritesRef.current,
         budget
@@ -8870,6 +9089,28 @@
       const nextSettings = applySettingsPatch(patch);
       await saveSettings(nextSettings);
     };
+    const syncModelCatalog = (0, import_react3.useCallback)(async (manual = false) => {
+      setModelSyncStatus("syncing");
+      try {
+        const models = await syncOpenAiModelCatalog();
+        const updatedAt = Date.now();
+        setModelCatalog(models);
+        setModelCatalogUpdatedAt(updatedAt);
+        await storageSet({
+          [MODEL_CATALOG_STORAGE_KEY]: {
+            updatedAt,
+            models
+          }
+        });
+        setModelSyncStatus("synced");
+      } catch (error) {
+        if (manual) {
+          console.warn("[GPT\u804A\u5929\u5BFC\u822A\u5668] \u540C\u6B65 OpenAI \u6A21\u578B\u9884\u7B97\u5931\u8D25\uFF1A", error);
+        }
+        setModelCatalog(BUILT_IN_MODEL_BUDGETS);
+        setModelSyncStatus("failed");
+      }
+    }, []);
     (0, import_react3.useEffect)(() => {
       installRouteEvents();
       let lastHref = location.href;
@@ -8895,6 +9136,28 @@
         window.removeEventListener("conversation-navigator-route-change", updatePageKey);
       };
     }, []);
+    (0, import_react3.useEffect)(() => {
+      let cancelled = false;
+      async function loadModelCatalog() {
+        const stored = await storageGet(MODEL_CATALOG_STORAGE_KEY);
+        if (cancelled) {
+          return;
+        }
+        if (stored?.models?.length) {
+          const models = mergeModelCatalog(stored.models);
+          setModelCatalog(models);
+          setModelCatalogUpdatedAt(stored.updatedAt || 0);
+        }
+        const shouldSync = !stored?.updatedAt || Date.now() - stored.updatedAt > MODEL_SYNC_INTERVAL_MS;
+        if (shouldSync) {
+          syncModelCatalog(false);
+        }
+      }
+      loadModelCatalog();
+      return () => {
+        cancelled = true;
+      };
+    }, [syncModelCatalog]);
     (0, import_react3.useEffect)(() => {
       const syncTheme = () => setTheme(detectPageTheme());
       const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -9012,7 +9275,16 @@
         scan();
       }, 100);
       return () => window.clearTimeout(timer);
-    }, [favorites, pageKey, scan, settings.cacheMode, settings.manualTokenBudget, settings.tokenBudgetMode]);
+    }, [
+      favorites,
+      modelCatalog,
+      pageKey,
+      scan,
+      settings.cacheMode,
+      settings.manualTokenBudget,
+      settings.tokenBudgetMode,
+      settings.tokenModelId
+    ]);
     (0, import_react3.useEffect)(() => {
       let timer;
       const scheduleScan = () => {
@@ -9117,14 +9389,15 @@
     }, [favoritesOnly, items, query]);
     const detectedModelLabel = (0, import_react3.useMemo)(() => detectModelLabel(), [items.length, pageId]);
     const tokenStats = (0, import_react3.useMemo)(
-      () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel),
-      [detectedModelLabel, mapEntries, settings, viewportMetrics]
+      () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
+      [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
     );
     const tokenBudgetPercent = tokenStats.budget > 0 ? tokenStats.total / tokenStats.budget * 100 : 0;
     const minimapBlocks = (0, import_react3.useMemo)(
       () => buildMinimapBlocks(mapEntries, activeId, viewportMetrics.visibleIds, query),
       [activeId, mapEntries, query, viewportMetrics.visibleIds]
     );
+    const syncStatusLabel = modelSyncStatus === "syncing" ? t.tokenModelSyncing : modelSyncStatus === "synced" ? t.tokenModelSynced : modelSyncStatus === "failed" ? t.tokenModelSyncFailed : t.tokenModelSync;
     const hudPosition = tokenHudDraft ?? (settings.tokenHudX > 0 || settings.tokenHudY > 0 ? { x: settings.tokenHudX, y: settings.tokenHudY } : null);
     const cacheLabel = settings.cacheMode === "chrome" ? t.extensionCache : settings.cacheMode === "page" ? t.pageCache : t.memoryOnly;
     const toggleCollapsed = async () => {
@@ -9240,14 +9513,14 @@
       document.addEventListener("pointercancel", handleUp, true);
     };
     const updateBudgetPreset = (value) => {
-      if (value === "auto") {
-        updateSettings({ tokenBudgetMode: "auto" });
+      if (value === "model") {
+        updateSettings({ tokenBudgetMode: "model" });
         return;
       }
       if (value === "custom") {
         updateSettings({
           tokenBudgetMode: "manual",
-          manualTokenBudget: [32e3, 128e3, 2e5].includes(settings.manualTokenBudget) ? 16e4 : settings.manualTokenBudget
+          manualTokenBudget: [32e3, 128e3, 2e5, 4e5, 1e6, 2e6].includes(settings.manualTokenBudget) ? 15e5 : settings.manualTokenBudget
         });
         return;
       }
@@ -9298,35 +9571,43 @@
           style: hudStyle,
           "aria-label": t.tokenPanel,
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-head", onPointerDown: variant === "hud" ? startTokenHudDrag : void 0, children: [
-              variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GripVertical, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChartColumn, { size: 14, "aria-hidden": "true" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanelShort }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: t.tokenPanelEstimated }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: "cnav-token-mini-button",
-                  title: settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
-                  "aria-label": settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
-                  onClick: () => updateSettings({
-                    tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
-                  }),
-                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronsUpDown, { size: 13, "aria-hidden": "true" })
-                }
-              ),
-              variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: "cnav-token-mini-button",
-                  title: collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
-                  "aria-label": collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
-                  onClick: () => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed }),
-                  children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Minimize2, { size: 13, "aria-hidden": "true" })
-                }
-              ) : null
-            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "div",
+              {
+                className: "cnav-token-head",
+                onPointerDown: variant === "hud" ? startTokenHudDrag : void 0,
+                onDoubleClick: variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : void 0,
+                children: [
+                  variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GripVertical, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChartColumn, { size: 14, "aria-hidden": "true" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanelShort }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: collapsed ? `${formatTokenCount(tokenStats.total)} \xB7 ${Math.round(tokenBudgetPercent)}%` : t.tokenPanelEstimated }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      className: "cnav-token-mini-button",
+                      title: settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
+                      "aria-label": settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
+                      onClick: () => updateSettings({
+                        tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
+                      }),
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronsUpDown, { size: 13, "aria-hidden": "true" })
+                    }
+                  ),
+                  variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      className: "cnav-token-mini-button",
+                      title: collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
+                      "aria-label": collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
+                      onClick: () => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed }),
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Minimize2, { size: 13, "aria-hidden": "true" })
+                    }
+                  ) : null
+                ]
+              }
+            ),
             collapsed ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-body", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-total", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: formatTokenCount(tokenStats.total) }),
@@ -9360,7 +9641,7 @@
         return null;
       }
       const edgeStyle = mode === "page-edge" ? {
-        left: resizeFrame ? Math.min(window.innerWidth - 34, resizeFrame.right + 10) : window.innerWidth - 42,
+        right: settings.collapsed ? EDGE_MINIMAP_RIGHT_GAP : 362,
         top: resizeFrame?.top ?? 112,
         height: resizeFrame?.height ?? Math.max(260, window.innerHeight - 224)
       } : void 0;
@@ -9622,19 +9903,44 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "select",
                   {
-                    value: settings.tokenBudgetMode === "auto" ? "auto" : [32e3, 128e3, 2e5].includes(settings.manualTokenBudget) ? String(settings.manualTokenBudget) : "custom",
+                    value: settings.tokenBudgetMode === "model" ? "model" : [32e3, 128e3, 2e5, 4e5, 1e6, 2e6].includes(settings.manualTokenBudget) ? String(settings.manualTokenBudget) : "custom",
                     onChange: (event) => updateBudgetPreset(event.currentTarget.value),
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: t.tokenBudgetAuto }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "model", children: t.tokenBudgetAuto }),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "32000", children: "32k" }),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "128000", children: "128k" }),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "200000", children: "200k" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "400000", children: "400k" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1000000", children: "1M" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "2000000", children: "2M" }),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: t.tokenBudgetCustom })
                     ]
                   }
                 )
               ] }),
-              settings.tokenBudgetMode === "manual" && ![32e3, 128e3, 2e5].includes(settings.manualTokenBudget) ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-display-field cnav-number-field", children: [
+              settings.tokenBudgetMode === "model" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-display-field cnav-model-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenModel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "select",
+                  {
+                    value: settings.tokenModelId,
+                    onChange: (event) => updateSettings({ tokenModelId: event.currentTarget.value }),
+                    children: modelCatalog.map((model) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: model.id, children: model.id === "chatgpt-auto" ? t.tokenModelAuto : `${model.label} \xB7 ${formatTokenCount(model.budget)}` }, model.id))
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-sync-button",
+                    type: "button",
+                    disabled: modelSyncStatus === "syncing",
+                    onClick: () => syncModelCatalog(true),
+                    title: modelCatalogUpdatedAt ? `${syncStatusLabel} ${new Date(modelCatalogUpdatedAt).toLocaleString()}` : syncStatusLabel,
+                    children: syncStatusLabel
+                  }
+                )
+              ] }) : null,
+              settings.tokenBudgetMode === "manual" && ![32e3, 128e3, 2e5, 4e5, 1e6, 2e6].includes(settings.manualTokenBudget) ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-display-field cnav-number-field", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenManualBudget }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "input",

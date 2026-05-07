@@ -31,6 +31,7 @@ import "./styles/content.css";
 
 const ROOT_ID = "conversation-navigator-root";
 const ANCHOR_ATTR = "data-conversation-navigator-id";
+const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
 const SCAN_DEBOUNCE_MS = 350;
 const CHAT_STYLE_ID = "conversation-navigator-chat-style";
 const OFFICIAL_THREAD_WIDTH = 60;
@@ -38,9 +39,11 @@ const THREAD_WIDTH_MIN = 60;
 const THREAD_WIDTH_MAX = 100;
 const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
+const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const MINIMAP_MAX_BLOCKS = 220;
 const DEFAULT_HUD_WIDTH = 246;
 const DEFAULT_HUD_GAP = 26;
+const EDGE_MINIMAP_RIGHT_GAP = 72;
 const TEXT_CONTROL_SELECTOR = [
   "button",
   '[role="button"]',
@@ -114,7 +117,7 @@ interface TokenStats {
   code: number;
   table: number;
   budget: number;
-  budgetSource: "auto" | "manual";
+  budgetSource: "model" | "manual";
   budgetLabel: string;
   modelLabel: string;
   hotMessages: number;
@@ -140,6 +143,21 @@ interface MinimapBlock {
   queryMatch: boolean;
 }
 
+interface ModelBudgetEntry {
+  id: string;
+  label: string;
+  budget: number;
+  source: "built-in" | "openai";
+  aliases: string[];
+}
+
+interface StoredModelCatalog {
+  updatedAt: number;
+  models: ModelBudgetEntry[];
+}
+
+type ModelSyncStatus = "idle" | "syncing" | "synced" | "failed";
+
 interface ResizeFrame {
   left: number;
   right: number;
@@ -160,6 +178,92 @@ const tokenCountCache = new Map<string, number>();
 const tokenKeyQueue: string[] = [];
 let nextNodeAnchorIndex = 1;
 let tokenizer: Tiktoken | null = null;
+
+const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
+  {
+    id: "chatgpt-auto",
+    label: "Auto current GPT",
+    budget: DEFAULT_TOKEN_BUDGET,
+    source: "built-in",
+    aliases: ["auto", "instant", "current model", "chatgpt"]
+  },
+  {
+    id: "gpt-5.2",
+    label: "GPT-5.2",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.2", "gpt 5.2"]
+  },
+  {
+    id: "gpt-5.1",
+    label: "GPT-5.1",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.1", "gpt 5.1"]
+  },
+  {
+    id: "gpt-5",
+    label: "GPT-5",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5", "gpt 5"]
+  },
+  {
+    id: "gpt-5-chat",
+    label: "GPT-5 Chat",
+    budget: 128000,
+    source: "built-in",
+    aliases: ["gpt-5 chat", "gpt-5-chat-latest", "gpt 5 chat"]
+  },
+  {
+    id: "gpt-4.1",
+    label: "GPT-4.1",
+    budget: 1047576,
+    source: "built-in",
+    aliases: ["gpt-4.1", "gpt 4.1", "gpt-4.1-mini", "gpt-4.1-nano"]
+  },
+  {
+    id: "gpt-4o",
+    label: "GPT-4o",
+    budget: 128000,
+    source: "built-in",
+    aliases: ["gpt-4o", "gpt 4o", "4o", "gpt-4o-mini"]
+  },
+  {
+    id: "o-series",
+    label: "o3 / o4",
+    budget: 200000,
+    source: "built-in",
+    aliases: ["o3", "o4", "o4-mini", "o3-mini", "o1", "o1-pro"]
+  },
+  {
+    id: "gpt-4-turbo",
+    label: "GPT-4 Turbo",
+    budget: 128000,
+    source: "built-in",
+    aliases: ["gpt-4-turbo", "gpt 4 turbo", "gpt-4-turbo-preview"]
+  },
+  {
+    id: "gpt-4",
+    label: "GPT-4",
+    budget: 32000,
+    source: "built-in",
+    aliases: ["gpt-4", "gpt 4", "gpt-4-32k"]
+  },
+  {
+    id: "gpt-3.5",
+    label: "GPT-3.5",
+    budget: 16000,
+    source: "built-in",
+    aliases: ["gpt-3.5", "gpt 3.5", "gpt-3.5-turbo"]
+  }
+];
+
+const OPENAI_MODEL_SYNC_URLS = [
+  "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
+  "https://platform.openai.com/docs/models",
+  "https://platform.openai.com/docs/models/compare"
+];
 
 const CHATGPT_HOSTS = new Set(["chat.openai.com", "chatgpt.com"]);
 
@@ -991,24 +1095,158 @@ function detectModelLabel(): string {
   return "";
 }
 
-function inferAutoTokenBudget(modelLabel: string): number {
-  const label = modelLabel.toLowerCase();
-  if (/\b(gpt-5|gpt-4\.1|o3|o4|200k)\b/.test(label)) {
-    return 200000;
+function parseBudgetText(value: string): number | null {
+  const normalized = value.replace(/,/g, "").trim().toLowerCase();
+  const million = normalized.match(/^(\d+(?:\.\d+)?)\s*m$/);
+  if (million) {
+    return Math.round(Number(million[1]) * 1000000);
   }
 
-  if (/\b(gpt-4o|gpt-4\.5|o1|128k)\b/.test(label)) {
-    return 128000;
+  const thousand = normalized.match(/^(\d+(?:\.\d+)?)\s*k$/);
+  if (thousand) {
+    return Math.round(Number(thousand[1]) * 1000);
   }
 
-  if (/\b(32k|gpt-4(?!o)|gpt-3\.5)\b/.test(label)) {
-    return 32000;
-  }
-
-  return DEFAULT_TOKEN_BUDGET;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric >= 8000 ? Math.round(numeric) : null;
 }
 
-function getTokenBudget(settings: NavigatorSettings, modelLabel = detectModelLabel()) {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseModelBudgetFromDocs(text: string, model: ModelBudgetEntry): number | null {
+  const normalized = text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+
+  for (const alias of [model.label, ...model.aliases]) {
+    const index = lower.indexOf(alias.toLowerCase());
+    if (index < 0) {
+      continue;
+    }
+
+    const snippet = normalized.slice(Math.max(0, index - 500), index + 1400);
+    const contextMatch =
+      snippet.match(/((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])\s*(?:token[s]?\s*)?(?:context|context window|window)/i) ??
+      snippet.match(/(?:context|context window|window)[^0-9]{0,80}((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])/i);
+    if (!contextMatch?.[1]) {
+      continue;
+    }
+
+    const parsed = parseBudgetText(contextMatch[1]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseOnlineModelCatalog(text: string): ModelBudgetEntry[] {
+  try {
+    const parsed = JSON.parse(text) as { models?: Array<Partial<ModelBudgetEntry>> };
+    if (!Array.isArray(parsed.models)) {
+      return [];
+    }
+
+    const models: ModelBudgetEntry[] = [];
+    for (const model of parsed.models) {
+      const budget = Number(model.budget);
+      if (!model.id || !model.label || !Number.isFinite(budget) || budget < 8000) {
+        continue;
+      }
+
+      models.push({
+        id: String(model.id),
+        label: String(model.label),
+        budget: Math.round(budget),
+        source: "openai",
+        aliases: Array.isArray(model.aliases)
+          ? model.aliases.map((alias) => String(alias))
+          : [String(model.label)]
+      });
+    }
+
+    return models;
+  } catch {
+    return [];
+  }
+}
+
+async function fetchTextWithTimeout(url: string, timeoutMs = 8000): Promise<string> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      credentials: "omit",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.text();
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function mergeModelCatalog(models: ModelBudgetEntry[]): ModelBudgetEntry[] {
+  const byId = new Map<string, ModelBudgetEntry>();
+  for (const model of [...BUILT_IN_MODEL_BUDGETS, ...models]) {
+    const existing = byId.get(model.id);
+    byId.set(model.id, existing ? { ...existing, ...model } : model);
+  }
+
+  return Array.from(byId.values());
+}
+
+async function syncOpenAiModelCatalog(): Promise<ModelBudgetEntry[]> {
+  const pages = await Promise.allSettled(OPENAI_MODEL_SYNC_URLS.map((url) => fetchTextWithTimeout(url)));
+  const fetchedText = pages
+    .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled")
+    .map((result) => result.value);
+  const onlineModels = fetchedText.flatMap(parseOnlineModelCatalog);
+  const joined = fetchedText.join("\n");
+
+  if (!joined && onlineModels.length === 0) {
+    throw new Error("No OpenAI model docs fetched");
+  }
+
+  const synced = BUILT_IN_MODEL_BUDGETS.map((model) => {
+    const parsed = model.id === "chatgpt-auto" ? null : parseModelBudgetFromDocs(joined, model);
+    return parsed ? { ...model, budget: parsed, source: "openai" as const } : model;
+  });
+
+  return mergeModelCatalog([...synced, ...onlineModels]);
+}
+
+function findModelBudget(modelCatalog: ModelBudgetEntry[], modelId: string): ModelBudgetEntry | undefined {
+  return modelCatalog.find((model) => model.id === modelId);
+}
+
+function detectModelBudget(modelCatalog: ModelBudgetEntry[], modelLabel: string): ModelBudgetEntry | undefined {
+  const label = modelLabel.toLowerCase();
+  if (!label) {
+    return undefined;
+  }
+
+  return modelCatalog
+    .filter((model) => model.id !== "chatgpt-auto")
+    .find((model) => model.aliases.some((alias) => label.includes(alias.toLowerCase())));
+}
+
+function getTokenBudget(
+  settings: NavigatorSettings,
+  modelLabel = detectModelLabel(),
+  modelCatalog = BUILT_IN_MODEL_BUDGETS
+) {
   if (settings.tokenBudgetMode === "manual") {
     return {
       budget: settings.manualTokenBudget,
@@ -1017,11 +1255,15 @@ function getTokenBudget(settings: NavigatorSettings, modelLabel = detectModelLab
     };
   }
 
-  const budget = inferAutoTokenBudget(modelLabel);
+  const selectedModel =
+    settings.tokenModelId === "chatgpt-auto"
+      ? detectModelBudget(modelCatalog, modelLabel)
+      : findModelBudget(modelCatalog, settings.tokenModelId);
+  const budget = selectedModel?.budget ?? DEFAULT_TOKEN_BUDGET;
   return {
     budget,
-    budgetSource: "auto" as const,
-    budgetLabel: `${formatTokenCount(budget)} auto`
+    budgetSource: "model" as const,
+    budgetLabel: `${selectedModel?.label ?? "GPT"} ${formatTokenCount(budget)}`
   };
 }
 
@@ -1029,9 +1271,10 @@ function buildTokenStats(
   entries: MessageMapEntry[],
   viewport: ViewportMetrics,
   settings: NavigatorSettings,
-  modelLabel: string
+  modelLabel: string,
+  modelCatalog: ModelBudgetEntry[]
 ): TokenStats {
-  const budgetInfo = getTokenBudget(settings, modelLabel);
+  const budgetInfo = getTokenBudget(settings, modelLabel, modelCatalog);
   return {
     total: entries.reduce((sum, entry) => sum + entry.tokenCount, 0),
     viewport: viewport.tokenCount,
@@ -1110,9 +1353,20 @@ function buildMinimapBlocks(
   for (let index = 0; index < entries.length; index += chunkSize) {
     const chunk = entries.slice(index, index + chunkSize);
     const first = chunk[0];
+    const firstElement = anchorRegistry.get(first.id);
+    const documentHeight = Math.max(
+      window.innerHeight,
+      document.documentElement.scrollHeight,
+      document.body.scrollHeight
+    );
+    const firstRect = firstElement?.getBoundingClientRect();
+    const topFromDom = firstRect ? ((firstRect.top + window.scrollY) / documentHeight) * 100 : null;
+    const heightFromDom = firstRect
+      ? Math.min(9, Math.max(0.45, (firstRect.height / documentHeight) * 100))
+      : null;
     const role = chunk.every((entry) => entry.role === first.role) ? first.role : "mixed";
-    const top = (index / entries.length) * 100;
-    const height = Math.max(1.4, (chunk.length / entries.length) * 100);
+    const top = topFromDom ?? (index / entries.length) * 100;
+    const height = heightFromDom ?? Math.max(0.8, (chunk.length / entries.length) * 100);
     const heatLevel = Math.max(...chunk.map((entry) => entry.heatLevel)) as HeatLevel;
     const queryMatch =
       Boolean(normalizedQuery) &&
@@ -1159,9 +1413,13 @@ function ConversationNavigator() {
     heightRatio: 0
   });
   const [tokenHudDraft, setTokenHudDraft] = useState<{ x: number; y: number } | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
+  const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
+  const [modelSyncStatus, setModelSyncStatus] = useState<ModelSyncStatus>("idle");
   const favoritesRef = useRef(favorites);
   const pageKeyRef = useRef(pageKey);
   const settingsRef = useRef(settings);
+  const modelCatalogRef = useRef(modelCatalog);
   const listRef = useRef<HTMLDivElement | null>(null);
   const revealLatestOnNextPaintRef = useRef(true);
   const openingTimerRef = useRef<number | undefined>(undefined);
@@ -1170,9 +1428,10 @@ function ConversationNavigator() {
   favoritesRef.current = favorites;
   pageKeyRef.current = pageKey;
   settingsRef.current = settings;
+  modelCatalogRef.current = modelCatalog;
 
   const scan = useCallback(async () => {
-    const { budget } = getTokenBudget(settingsRef.current);
+    const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
     const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
       favoritesRef.current,
       budget
@@ -1198,6 +1457,29 @@ function ConversationNavigator() {
     const nextSettings = applySettingsPatch(patch);
     await saveSettings(nextSettings);
   };
+
+  const syncModelCatalog = useCallback(async (manual = false) => {
+    setModelSyncStatus("syncing");
+    try {
+      const models = await syncOpenAiModelCatalog();
+      const updatedAt = Date.now();
+      setModelCatalog(models);
+      setModelCatalogUpdatedAt(updatedAt);
+      await storageSet({
+        [MODEL_CATALOG_STORAGE_KEY]: {
+          updatedAt,
+          models
+        } satisfies StoredModelCatalog
+      });
+      setModelSyncStatus("synced");
+    } catch (error) {
+      if (manual) {
+        console.warn("[GPT聊天导航器] 同步 OpenAI 模型预算失败：", error);
+      }
+      setModelCatalog(BUILT_IN_MODEL_BUDGETS);
+      setModelSyncStatus("failed");
+    }
+  }, []);
 
   useEffect(() => {
     installRouteEvents();
@@ -1230,6 +1512,34 @@ function ConversationNavigator() {
       window.removeEventListener("conversation-navigator-route-change", updatePageKey);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadModelCatalog() {
+      const stored = await storageGet<StoredModelCatalog>(MODEL_CATALOG_STORAGE_KEY);
+      if (cancelled) {
+        return;
+      }
+
+      if (stored?.models?.length) {
+        const models = mergeModelCatalog(stored.models);
+        setModelCatalog(models);
+        setModelCatalogUpdatedAt(stored.updatedAt || 0);
+      }
+
+      const shouldSync = !stored?.updatedAt || Date.now() - stored.updatedAt > MODEL_SYNC_INTERVAL_MS;
+      if (shouldSync) {
+        syncModelCatalog(false);
+      }
+    }
+
+    loadModelCatalog();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [syncModelCatalog]);
 
   useEffect(() => {
     const syncTheme = () => setTheme(detectPageTheme());
@@ -1382,7 +1692,16 @@ function ConversationNavigator() {
     }, 100);
 
     return () => window.clearTimeout(timer);
-  }, [favorites, pageKey, scan, settings.cacheMode, settings.manualTokenBudget, settings.tokenBudgetMode]);
+  }, [
+    favorites,
+    modelCatalog,
+    pageKey,
+    scan,
+    settings.cacheMode,
+    settings.manualTokenBudget,
+    settings.tokenBudgetMode,
+    settings.tokenModelId
+  ]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -1517,14 +1836,22 @@ function ConversationNavigator() {
 
   const detectedModelLabel = useMemo(() => detectModelLabel(), [items.length, pageId]);
   const tokenStats = useMemo(
-    () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel),
-    [detectedModelLabel, mapEntries, settings, viewportMetrics]
+    () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
+    [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
   );
   const tokenBudgetPercent = tokenStats.budget > 0 ? (tokenStats.total / tokenStats.budget) * 100 : 0;
   const minimapBlocks = useMemo(
     () => buildMinimapBlocks(mapEntries, activeId, viewportMetrics.visibleIds, query),
     [activeId, mapEntries, query, viewportMetrics.visibleIds]
   );
+  const syncStatusLabel =
+    modelSyncStatus === "syncing"
+      ? t.tokenModelSyncing
+      : modelSyncStatus === "synced"
+        ? t.tokenModelSynced
+        : modelSyncStatus === "failed"
+          ? t.tokenModelSyncFailed
+          : t.tokenModelSync;
   const hudPosition =
     tokenHudDraft ??
     (settings.tokenHudX > 0 || settings.tokenHudY > 0
@@ -1673,16 +2000,16 @@ function ConversationNavigator() {
   };
 
   const updateBudgetPreset = (value: string) => {
-    if (value === "auto") {
-      updateSettings({ tokenBudgetMode: "auto" });
+    if (value === "model") {
+      updateSettings({ tokenBudgetMode: "model" });
       return;
     }
 
     if (value === "custom") {
       updateSettings({
         tokenBudgetMode: "manual",
-        manualTokenBudget: [32000, 128000, 200000].includes(settings.manualTokenBudget)
-          ? 160000
+        manualTokenBudget: [32000, 128000, 200000, 400000, 1000000, 2000000].includes(settings.manualTokenBudget)
+          ? 1500000
           : settings.manualTokenBudget
       });
       return;
@@ -1746,10 +2073,18 @@ function ConversationNavigator() {
         style={hudStyle}
         aria-label={t.tokenPanel}
       >
-        <div className="cnav-token-head" onPointerDown={variant === "hud" ? startTokenHudDrag : undefined}>
+        <div
+          className="cnav-token-head"
+          onPointerDown={variant === "hud" ? startTokenHudDrag : undefined}
+          onDoubleClick={variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : undefined}
+        >
           {variant === "hud" ? <GripVertical size={14} aria-hidden="true" /> : <BarChart3 size={14} aria-hidden="true" />}
           <span>{t.tokenPanelShort}</span>
-          <small>{t.tokenPanelEstimated}</small>
+          <small>
+            {collapsed
+              ? `${formatTokenCount(tokenStats.total)} · ${Math.round(tokenBudgetPercent)}%`
+              : t.tokenPanelEstimated}
+          </small>
           <button
             type="button"
             className="cnav-token-mini-button"
@@ -1816,9 +2151,7 @@ function ConversationNavigator() {
     const edgeStyle =
       mode === "page-edge"
         ? {
-            left: resizeFrame
-              ? Math.min(window.innerWidth - 34, resizeFrame.right + 10)
-              : window.innerWidth - 42,
+            right: settings.collapsed ? EDGE_MINIMAP_RIGHT_GAP : 362,
             top: resizeFrame?.top ?? 112,
             height: resizeFrame?.height ?? Math.max(260, window.innerHeight - 224)
           }
@@ -2059,23 +2392,56 @@ function ConversationNavigator() {
                 <span>{t.tokenBudget}</span>
                 <select
                   value={
-                    settings.tokenBudgetMode === "auto"
-                      ? "auto"
-                      : [32000, 128000, 200000].includes(settings.manualTokenBudget)
+                    settings.tokenBudgetMode === "model"
+                      ? "model"
+                      : [32000, 128000, 200000, 400000, 1000000, 2000000].includes(settings.manualTokenBudget)
                         ? String(settings.manualTokenBudget)
                         : "custom"
                   }
                   onChange={(event) => updateBudgetPreset(event.currentTarget.value)}
                 >
-                  <option value="auto">{t.tokenBudgetAuto}</option>
+                  <option value="model">{t.tokenBudgetAuto}</option>
                   <option value="32000">32k</option>
                   <option value="128000">128k</option>
                   <option value="200000">200k</option>
+                  <option value="400000">400k</option>
+                  <option value="1000000">1M</option>
+                  <option value="2000000">2M</option>
                   <option value="custom">{t.tokenBudgetCustom}</option>
                 </select>
               </label>
+              {settings.tokenBudgetMode === "model" ? (
+                <label className="cnav-display-field cnav-model-field">
+                  <span>{t.tokenModel}</span>
+                  <select
+                    value={settings.tokenModelId}
+                    onChange={(event) => updateSettings({ tokenModelId: event.currentTarget.value })}
+                  >
+                    {modelCatalog.map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.id === "chatgpt-auto"
+                          ? t.tokenModelAuto
+                          : `${model.label} · ${formatTokenCount(model.budget)}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="cnav-sync-button"
+                    type="button"
+                    disabled={modelSyncStatus === "syncing"}
+                    onClick={() => syncModelCatalog(true)}
+                    title={
+                      modelCatalogUpdatedAt
+                        ? `${syncStatusLabel} ${new Date(modelCatalogUpdatedAt).toLocaleString()}`
+                        : syncStatusLabel
+                    }
+                  >
+                    {syncStatusLabel}
+                  </button>
+                </label>
+              ) : null}
               {settings.tokenBudgetMode === "manual" &&
-              ![32000, 128000, 200000].includes(settings.manualTokenBudget) ? (
+              ![32000, 128000, 200000, 400000, 1000000, 2000000].includes(settings.manualTokenBudget) ? (
                 <label className="cnav-display-field cnav-number-field">
                   <span>{t.tokenManualBudget}</span>
                   <input

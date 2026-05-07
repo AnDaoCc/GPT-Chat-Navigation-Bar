@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-05-07",
+  "models": [
+    {
+      "id": "gpt-5.2",
+      "label": "GPT-5.2",
+      "budget": 400000,
+      "aliases": ["gpt-5.2", "gpt 5.2"]
+    },
+    {
+      "id": "gpt-5.1",
+      "label": "GPT-5.1",
+      "budget": 400000,
+      "aliases": ["gpt-5.1", "gpt 5.1"]
+    },
+    {
+      "id": "gpt-5",
+      "label": "GPT-5",
+      "budget": 400000,
+      "aliases": ["gpt-5", "gpt 5"]
+    },
+    {
+      "id": "gpt-5-chat",
+      "label": "GPT-5 Chat",
+      "budget": 128000,
+      "aliases": ["gpt-5-chat-latest", "gpt-5 chat", "gpt 5 chat"]
+    },
+    {
+      "id": "gpt-4.1",
+      "label": "GPT-4.1",
+      "budget": 1047576,
+      "aliases": ["gpt-4.1", "gpt 4.1", "gpt-4.1-mini", "gpt-4.1-nano"]
+    },
+    {
+      "id": "gpt-4o",
+      "label": "GPT-4o",
+      "budget": 128000,
+      "aliases": ["gpt-4o", "gpt 4o", "4o", "gpt-4o-mini"]
+    },
+    {
+      "id": "o-series",
+      "label": "o3 / o4",
+      "budget": 200000,
+      "aliases": ["o3", "o4", "o4-mini", "o3-mini", "o1", "o1-pro"]
+    },
+    {
+      "id": "gpt-4-turbo",
+      "label": "GPT-4 Turbo",
+      "budget": 128000,
+      "aliases": ["gpt-4-turbo", "gpt 4 turbo", "gpt-4-turbo-preview"]
+    },
+    {
+      "id": "gpt-4",
+      "label": "GPT-4",
+      "budget": 32000,
+      "aliases": ["gpt-4", "gpt 4", "gpt-4-32k"]
+    },
+    {
+      "id": "gpt-3.5",
+      "label": "GPT-3.5",
+      "budget": 16000,
+      "aliases": ["gpt-3.5", "gpt 3.5", "gpt-3.5-turbo"]
+    }
+  ]
+}

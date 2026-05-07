@@ -7,7 +7,9 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://chat.openai.com/*",
-    "https://chatgpt.com/*"
+    "https://chatgpt.com/*",
+    "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
+    "https://platform.openai.com/docs/models*"
   ],
   "icons": {
     "16": "assets/icon16.png",

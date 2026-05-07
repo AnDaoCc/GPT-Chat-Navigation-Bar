@@ -5,7 +5,7 @@ export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
 export type CacheMode = "chrome" | "page" | "off";
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
 export type TokenPanelMode = "floating" | "dock";
-export type TokenBudgetMode = "auto" | "manual";
+export type TokenBudgetMode = "model" | "manual";
 export type MinimapMode = "page-edge" | "dock";
 
 export interface StoredNavigatorNode {
@@ -46,6 +46,7 @@ export interface NavigatorSettings {
   tokenPanelMode: TokenPanelMode;
   tokenPanelCollapsed: boolean;
   tokenBudgetMode: TokenBudgetMode;
+  tokenModelId: string;
   manualTokenBudget: number;
   tokenHudX: number;
   tokenHudY: number;
@@ -66,7 +67,8 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   tokenPanelEnabled: true,
   tokenPanelMode: "floating",
   tokenPanelCollapsed: false,
-  tokenBudgetMode: "auto",
+  tokenBudgetMode: "model",
+  tokenModelId: "chatgpt-auto",
   manualTokenBudget: 128000,
   tokenHudX: 0,
   tokenHudY: 0,
@@ -99,7 +101,7 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
   const language: AppLanguage =
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
   const tokenPanelMode: TokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
-  const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "auto";
+  const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
   const minimapMode: MinimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
@@ -117,7 +119,10 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     tokenPanelMode,
     tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
     tokenBudgetMode,
-    manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 1000000, 128000)),
+    tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim()
+      ? value.tokenModelId.trim().slice(0, 80)
+      : "chatgpt-auto",
+    manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 2000000, 128000)),
     tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
     tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0)),
     minimapEnabled: value?.minimapEnabled !== false,
