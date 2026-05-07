@@ -7464,22 +7464,6 @@
     ["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]
   ]);
 
-  // node_modules/lucide-react/dist/esm/icons/chevrons-up-down.js
-  var ChevronsUpDown = createLucideIcon("ChevronsUpDown", [
-    ["path", { d: "m7 15 5 5 5-5", key: "1hf1tw" }],
-    ["path", { d: "m7 9 5-5 5 5", key: "sgt6xg" }]
-  ]);
-
-  // node_modules/lucide-react/dist/esm/icons/grip-vertical.js
-  var GripVertical = createLucideIcon("GripVertical", [
-    ["circle", { cx: "9", cy: "12", r: "1", key: "1vctgf" }],
-    ["circle", { cx: "9", cy: "5", r: "1", key: "hp0tcf" }],
-    ["circle", { cx: "9", cy: "19", r: "1", key: "fkjjf6" }],
-    ["circle", { cx: "15", cy: "12", r: "1", key: "1tmaij" }],
-    ["circle", { cx: "15", cy: "5", r: "1", key: "19l28e" }],
-    ["circle", { cx: "15", cy: "19", r: "1", key: "f4zoj3" }]
-  ]);
-
   // node_modules/lucide-react/dist/esm/icons/languages.js
   var Languages = createLucideIcon("Languages", [
     ["path", { d: "m5 8 6 6", key: "1wu5hv" }],
@@ -7488,14 +7472,6 @@
     ["path", { d: "M7 2h1", key: "1t2jsx" }],
     ["path", { d: "m22 22-5-10-5 10", key: "don7ne" }],
     ["path", { d: "M14 18h6", key: "1m8k6r" }]
-  ]);
-
-  // node_modules/lucide-react/dist/esm/icons/minimize-2.js
-  var Minimize2 = createLucideIcon("Minimize2", [
-    ["polyline", { points: "4 14 10 14 10 20", key: "11kfnr" }],
-    ["polyline", { points: "20 10 14 10 14 4", key: "rlmsce" }],
-    ["line", { x1: "14", x2: "21", y1: "10", y2: "3", key: "o5lafz" }],
-    ["line", { x1: "3", x2: "10", y1: "21", y2: "14", key: "1atl0r" }]
   ]);
 
   // node_modules/lucide-react/dist/esm/icons/panel-right-close.js
@@ -7723,13 +7699,9 @@
     chatContentWidth: 60,
     autoCollapseOnOutsideClick: false,
     tokenPanelEnabled: true,
-    tokenPanelMode: "floating",
-    tokenPanelCollapsed: false,
     tokenBudgetMode: "model",
     tokenModelId: "chatgpt-auto",
     manualTokenBudget: 128e3,
-    tokenHudX: 0,
-    tokenHudY: 0,
     minimapEnabled: true,
     minimapMode: "page-edge"
   };
@@ -7747,7 +7719,6 @@
   function normalizeSettings(value) {
     const cacheMode = value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
     const language = value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
-    const tokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
     const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
     const minimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
     const isCurrentLayout = value?.chatLayoutVersion === 2;
@@ -7762,13 +7733,9 @@
       chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : void 0, 60, 100, 60),
       autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
       tokenPanelEnabled: value?.tokenPanelEnabled !== false,
-      tokenPanelMode,
-      tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
       tokenBudgetMode,
       tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim() ? value.tokenModelId.trim().slice(0, 80) : "chatgpt-auto",
       manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 2e6, 128e3)),
-      tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 1e4, 0)),
-      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0)),
       minimapEnabled: value?.minimapEnabled !== false,
       minimapMode
     };
@@ -7830,10 +7797,6 @@
       tokenPanel: "Token \u9762\u677F",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "\u672C\u5730\u4F30\u7B97",
-      tokenPanelFloating: "\u60AC\u6D6E",
-      tokenPanelDock: "\u4FA7\u680F",
-      tokenPanelCollapse: "\u6298\u53E0 Token \u9762\u677F",
-      tokenPanelExpand: "\u5C55\u5F00 Token \u9762\u677F",
       tokenTotal: "\u603B\u91CF",
       tokenViewport: "\u5F53\u524D\u7A97\u53E3",
       tokenBudget: "\u9884\u7B97",
@@ -7906,10 +7869,6 @@
       tokenPanel: "Token \u9762\u677F",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "\u672C\u6A5F\u4F30\u7B97",
-      tokenPanelFloating: "\u61F8\u6D6E",
-      tokenPanelDock: "\u5074\u6B04",
-      tokenPanelCollapse: "\u6536\u5408 Token \u9762\u677F",
-      tokenPanelExpand: "\u5C55\u958B Token \u9762\u677F",
       tokenTotal: "\u7E3D\u91CF",
       tokenViewport: "\u76EE\u524D\u8996\u7A97",
       tokenBudget: "\u9810\u7B97",
@@ -7982,10 +7941,6 @@
       tokenPanel: "Token panel",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "Local estimate",
-      tokenPanelFloating: "Floating",
-      tokenPanelDock: "Dock",
-      tokenPanelCollapse: "Collapse token panel",
-      tokenPanelExpand: "Expand token panel",
       tokenTotal: "Total",
       tokenViewport: "Current window",
       tokenBudget: "Budget",
@@ -8031,8 +7986,6 @@
   var TOKEN_CACHE_LIMIT = 900;
   var MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1e3;
   var MINIMAP_MAX_BLOCKS = 220;
-  var DEFAULT_HUD_WIDTH = 246;
-  var DEFAULT_HUD_GAP = 26;
   var EDGE_MINIMAP_RIGHT_GAP = 72;
   var TEXT_CONTROL_SELECTOR = [
     "button",
@@ -9048,7 +9001,6 @@
       topRatio: 0,
       heightRatio: 0
     });
-    const [tokenHudDraft, setTokenHudDraft] = (0, import_react3.useState)(null);
     const [modelCatalog, setModelCatalog] = (0, import_react3.useState)(BUILT_IN_MODEL_BUDGETS);
     const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = (0, import_react3.useState)(0);
     const [modelSyncStatus, setModelSyncStatus] = (0, import_react3.useState)("idle");
@@ -9398,7 +9350,6 @@
       [activeId, mapEntries, query, viewportMetrics.visibleIds]
     );
     const syncStatusLabel = modelSyncStatus === "syncing" ? t.tokenModelSyncing : modelSyncStatus === "synced" ? t.tokenModelSynced : modelSyncStatus === "failed" ? t.tokenModelSyncFailed : t.tokenModelSync;
-    const hudPosition = tokenHudDraft ?? (settings.tokenHudX > 0 || settings.tokenHudY > 0 ? { x: settings.tokenHudX, y: settings.tokenHudY } : null);
     const cacheLabel = settings.cacheMode === "chrome" ? t.extensionCache : settings.cacheMode === "page" ? t.pageCache : t.memoryOnly;
     const toggleCollapsed = async () => {
       if (settings.collapsed) {
@@ -9473,45 +9424,6 @@
       document.addEventListener("pointerup", handleUp, true);
       document.addEventListener("pointercancel", handleUp, true);
     };
-    const startTokenHudDrag = (event) => {
-      const target = event.target;
-      if (target?.closest("button, input, select")) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      const shell = event.currentTarget.closest(".cnav-token-hud");
-      const rect = shell?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startLeft = rect.left;
-      const startTop = rect.top;
-      let latestPosition = { x: Math.round(startLeft), y: Math.round(startTop) };
-      const handleMove = (moveEvent) => {
-        const nextX = Math.round(
-          Math.min(window.innerWidth - DEFAULT_HUD_WIDTH - 8, Math.max(8, startLeft + moveEvent.clientX - startX))
-        );
-        const nextY = Math.round(Math.min(window.innerHeight - 96, Math.max(8, startTop + moveEvent.clientY - startY)));
-        latestPosition = { x: nextX, y: nextY };
-        setTokenHudDraft(latestPosition);
-      };
-      const handleUp = () => {
-        document.removeEventListener("pointermove", handleMove, true);
-        document.removeEventListener("pointerup", handleUp, true);
-        document.removeEventListener("pointercancel", handleUp, true);
-        updateSettings({
-          tokenHudX: latestPosition.x,
-          tokenHudY: latestPosition.y
-        });
-        setTokenHudDraft(null);
-      };
-      document.addEventListener("pointermove", handleMove, true);
-      document.addEventListener("pointerup", handleUp, true);
-      document.addEventListener("pointercancel", handleUp, true);
-    };
     const updateBudgetPreset = (value) => {
       if (value === "model") {
         updateSettings({ tokenBudgetMode: "model" });
@@ -9553,62 +9465,27 @@
       );
       await persistRecord(settings, pageKey, nextItems, nextFavorites);
     };
-    const renderTokenPanel = (variant) => {
+    const renderTokenPanel = () => {
       if (!settings.tokenPanelEnabled) {
         return null;
       }
-      const collapsed = variant === "hud" && settings.tokenPanelCollapsed;
       const userPercent = tokenStats.total > 0 ? tokenStats.user / tokenStats.total * 100 : 0;
       const assistantPercent = tokenStats.total > 0 ? tokenStats.assistant / tokenStats.total * 100 : 0;
       const codePercent = tokenStats.total > 0 ? tokenStats.code / tokenStats.total * 100 : 0;
       const tablePercent = tokenStats.total > 0 ? tokenStats.table / tokenStats.total * 100 : 0;
-      const hudStyle = variant === "hud" ? hudPosition ? { left: hudPosition.x, top: hudPosition.y } : { right: DEFAULT_HUD_WIDTH + DEFAULT_HUD_GAP + 88, top: 118 } : void 0;
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
         "section",
         {
-          className: `cnav-token-panel cnav-token-${variant}${collapsed ? " is-collapsed" : ""}`,
+          className: "cnav-token-panel cnav-token-dock",
           "data-theme": theme,
-          style: hudStyle,
           "aria-label": t.tokenPanel,
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "div",
-              {
-                className: "cnav-token-head",
-                onPointerDown: variant === "hud" ? startTokenHudDrag : void 0,
-                onDoubleClick: variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : void 0,
-                children: [
-                  variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(GripVertical, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChartColumn, { size: 14, "aria-hidden": "true" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanelShort }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: collapsed ? `${formatTokenCount(tokenStats.total)} \xB7 ${Math.round(tokenBudgetPercent)}%` : t.tokenPanelEstimated }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      className: "cnav-token-mini-button",
-                      title: settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
-                      "aria-label": settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating,
-                      onClick: () => updateSettings({
-                        tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
-                      }),
-                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronsUpDown, { size: 13, "aria-hidden": "true" })
-                    }
-                  ),
-                  variant === "hud" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    "button",
-                    {
-                      type: "button",
-                      className: "cnav-token-mini-button",
-                      title: collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
-                      "aria-label": collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse,
-                      onClick: () => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed }),
-                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Minimize2, { size: 13, "aria-hidden": "true" })
-                    }
-                  ) : null
-                ]
-              }
-            ),
-            collapsed ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-body", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChartColumn, { size: 14, "aria-hidden": "true" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanelShort }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: t.tokenPanelEstimated })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-body", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-total", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: formatTokenCount(tokenStats.total) }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenTotal }),
@@ -9726,7 +9603,6 @@
           }
         )
       ] }) : null,
-      settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null,
       settings.minimapMode === "page-edge" ? renderMinimap("page-edge") : null,
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "aside",
@@ -9885,20 +9761,6 @@
                 )
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-display-field cnav-select-field", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanel }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                  "select",
-                  {
-                    value: settings.tokenPanelMode,
-                    onChange: (event) => updateSettings({ tokenPanelMode: event.currentTarget.value === "dock" ? "dock" : "floating" }),
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "floating", children: t.tokenPanelFloating }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "dock", children: t.tokenPanelDock })
-                    ]
-                  }
-                )
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-display-field cnav-select-field", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenBudget }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "select",
@@ -9980,7 +9842,7 @@
                 )
               ] })
             ] }) : null,
-            settings.tokenPanelMode === "dock" ? renderTokenPanel("dock") : null,
+            renderTokenPanel(),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-controls", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-search", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { size: 16, "aria-hidden": "true" }),
@@ -10135,10 +9997,7 @@ lucide-react/dist/esm/Icon.js:
 lucide-react/dist/esm/createLucideIcon.js:
 lucide-react/dist/esm/icons/chart-column.js:
 lucide-react/dist/esm/icons/chevron-right.js:
-lucide-react/dist/esm/icons/chevrons-up-down.js:
-lucide-react/dist/esm/icons/grip-vertical.js:
 lucide-react/dist/esm/icons/languages.js:
-lucide-react/dist/esm/icons/minimize-2.js:
 lucide-react/dist/esm/icons/panel-right-close.js:
 lucide-react/dist/esm/icons/panel-right-open.js:
 lucide-react/dist/esm/icons/refresh-cw.js:

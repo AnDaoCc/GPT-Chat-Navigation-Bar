@@ -7420,13 +7420,9 @@
     chatContentWidth: 60,
     autoCollapseOnOutsideClick: false,
     tokenPanelEnabled: true,
-    tokenPanelMode: "floating",
-    tokenPanelCollapsed: false,
     tokenBudgetMode: "model",
     tokenModelId: "chatgpt-auto",
     manualTokenBudget: 128e3,
-    tokenHudX: 0,
-    tokenHudY: 0,
     minimapEnabled: true,
     minimapMode: "page-edge"
   };
@@ -7444,7 +7440,6 @@
   function normalizeSettings(value) {
     const cacheMode = value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
     const language = value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
-    const tokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
     const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
     const minimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
     const isCurrentLayout = value?.chatLayoutVersion === 2;
@@ -7459,13 +7454,9 @@
       chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : void 0, 60, 100, 60),
       autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
       tokenPanelEnabled: value?.tokenPanelEnabled !== false,
-      tokenPanelMode,
-      tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
       tokenBudgetMode,
       tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim() ? value.tokenModelId.trim().slice(0, 80) : "chatgpt-auto",
       manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 2e6, 128e3)),
-      tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 1e4, 0)),
-      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0)),
       minimapEnabled: value?.minimapEnabled !== false,
       minimapMode
     };
@@ -7530,10 +7521,6 @@
       tokenPanel: "Token \u9762\u677F",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "\u672C\u5730\u4F30\u7B97",
-      tokenPanelFloating: "\u60AC\u6D6E",
-      tokenPanelDock: "\u4FA7\u680F",
-      tokenPanelCollapse: "\u6298\u53E0 Token \u9762\u677F",
-      tokenPanelExpand: "\u5C55\u5F00 Token \u9762\u677F",
       tokenTotal: "\u603B\u91CF",
       tokenViewport: "\u5F53\u524D\u7A97\u53E3",
       tokenBudget: "\u9884\u7B97",
@@ -7606,10 +7593,6 @@
       tokenPanel: "Token \u9762\u677F",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "\u672C\u6A5F\u4F30\u7B97",
-      tokenPanelFloating: "\u61F8\u6D6E",
-      tokenPanelDock: "\u5074\u6B04",
-      tokenPanelCollapse: "\u6536\u5408 Token \u9762\u677F",
-      tokenPanelExpand: "\u5C55\u958B Token \u9762\u677F",
       tokenTotal: "\u7E3D\u91CF",
       tokenViewport: "\u76EE\u524D\u8996\u7A97",
       tokenBudget: "\u9810\u7B97",
@@ -7682,10 +7665,6 @@
       tokenPanel: "Token panel",
       tokenPanelShort: "Token",
       tokenPanelEstimated: "Local estimate",
-      tokenPanelFloating: "Floating",
-      tokenPanelDock: "Dock",
-      tokenPanelCollapse: "Collapse token panel",
-      tokenPanelExpand: "Expand token panel",
       tokenTotal: "Total",
       tokenViewport: "Current window",
       tokenBudget: "Budget",

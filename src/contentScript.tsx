@@ -3,11 +3,8 @@ import { createRoot } from "react-dom/client";
 import {
   BarChart3,
   ChevronRight,
-  ChevronsUpDown,
-  GripVertical,
   Languages,
   Map as MapIcon,
-  Minimize2,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -41,8 +38,6 @@ const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
 const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const MINIMAP_MAX_BLOCKS = 220;
-const DEFAULT_HUD_WIDTH = 246;
-const DEFAULT_HUD_GAP = 26;
 const EDGE_MINIMAP_RIGHT_GAP = 72;
 const TEXT_CONTROL_SELECTOR = [
   "button",
@@ -1412,7 +1407,6 @@ function ConversationNavigator() {
     topRatio: 0,
     heightRatio: 0
   });
-  const [tokenHudDraft, setTokenHudDraft] = useState<{ x: number; y: number } | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
   const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
   const [modelSyncStatus, setModelSyncStatus] = useState<ModelSyncStatus>("idle");
@@ -1852,11 +1846,6 @@ function ConversationNavigator() {
         : modelSyncStatus === "failed"
           ? t.tokenModelSyncFailed
           : t.tokenModelSync;
-  const hudPosition =
-    tokenHudDraft ??
-    (settings.tokenHudX > 0 || settings.tokenHudY > 0
-      ? { x: settings.tokenHudX, y: settings.tokenHudY }
-      : null);
 
   const cacheLabel =
     settings.cacheMode === "chrome"
@@ -1953,52 +1942,6 @@ function ConversationNavigator() {
     document.addEventListener("pointercancel", handleUp, true);
   };
 
-  const startTokenHudDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("button, input, select")) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const shell = event.currentTarget.closest<HTMLElement>(".cnav-token-hud");
-    const rect = shell?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startLeft = rect.left;
-    const startTop = rect.top;
-    let latestPosition = { x: Math.round(startLeft), y: Math.round(startTop) };
-
-    const handleMove = (moveEvent: PointerEvent) => {
-      const nextX = Math.round(
-        Math.min(window.innerWidth - DEFAULT_HUD_WIDTH - 8, Math.max(8, startLeft + moveEvent.clientX - startX))
-      );
-      const nextY = Math.round(Math.min(window.innerHeight - 96, Math.max(8, startTop + moveEvent.clientY - startY)));
-      latestPosition = { x: nextX, y: nextY };
-      setTokenHudDraft(latestPosition);
-    };
-
-    const handleUp = () => {
-      document.removeEventListener("pointermove", handleMove, true);
-      document.removeEventListener("pointerup", handleUp, true);
-      document.removeEventListener("pointercancel", handleUp, true);
-      updateSettings({
-        tokenHudX: latestPosition.x,
-        tokenHudY: latestPosition.y
-      });
-      setTokenHudDraft(null);
-    };
-
-    document.addEventListener("pointermove", handleMove, true);
-    document.addEventListener("pointerup", handleUp, true);
-    document.addEventListener("pointercancel", handleUp, true);
-  };
-
   const updateBudgetPreset = (value: string) => {
     if (value === "model") {
       updateSettings({ tokenBudgetMode: "model" });
@@ -2049,96 +1992,54 @@ function ConversationNavigator() {
     await persistRecord(settings, pageKey, nextItems, nextFavorites);
   };
 
-  const renderTokenPanel = (variant: "hud" | "dock") => {
+  const renderTokenPanel = () => {
     if (!settings.tokenPanelEnabled) {
       return null;
     }
 
-    const collapsed = variant === "hud" && settings.tokenPanelCollapsed;
     const userPercent = tokenStats.total > 0 ? (tokenStats.user / tokenStats.total) * 100 : 0;
     const assistantPercent = tokenStats.total > 0 ? (tokenStats.assistant / tokenStats.total) * 100 : 0;
     const codePercent = tokenStats.total > 0 ? (tokenStats.code / tokenStats.total) * 100 : 0;
     const tablePercent = tokenStats.total > 0 ? (tokenStats.table / tokenStats.total) * 100 : 0;
-    const hudStyle =
-      variant === "hud"
-        ? hudPosition
-          ? { left: hudPosition.x, top: hudPosition.y }
-          : { right: DEFAULT_HUD_WIDTH + DEFAULT_HUD_GAP + 88, top: 118 }
-        : undefined;
 
     return (
       <section
-        className={`cnav-token-panel cnav-token-${variant}${collapsed ? " is-collapsed" : ""}`}
+        className="cnav-token-panel cnav-token-dock"
         data-theme={theme}
-        style={hudStyle}
         aria-label={t.tokenPanel}
       >
-        <div
-          className="cnav-token-head"
-          onPointerDown={variant === "hud" ? startTokenHudDrag : undefined}
-          onDoubleClick={variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : undefined}
-        >
-          {variant === "hud" ? <GripVertical size={14} aria-hidden="true" /> : <BarChart3 size={14} aria-hidden="true" />}
+        <div className="cnav-token-head">
+          <BarChart3 size={14} aria-hidden="true" />
           <span>{t.tokenPanelShort}</span>
-          <small>
-            {collapsed
-              ? `${formatTokenCount(tokenStats.total)} · ${Math.round(tokenBudgetPercent)}%`
-              : t.tokenPanelEstimated}
-          </small>
-          <button
-            type="button"
-            className="cnav-token-mini-button"
-            title={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
-            aria-label={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
-            onClick={() =>
-              updateSettings({
-                tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
-              })
-            }
-          >
-            <ChevronsUpDown size={13} aria-hidden="true" />
-          </button>
-          {variant === "hud" ? (
-            <button
-              type="button"
-              className="cnav-token-mini-button"
-              title={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
-              aria-label={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
-              onClick={() => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed })}
-            >
-              <Minimize2 size={13} aria-hidden="true" />
-            </button>
-          ) : null}
+          <small>{t.tokenPanelEstimated}</small>
         </div>
 
-        {collapsed ? null : (
-          <div className="cnav-token-body">
-            <div className="cnav-token-total">
-              <strong>{formatTokenCount(tokenStats.total)}</strong>
-              <span>{t.tokenTotal}</span>
-              <small>{tokenStats.modelLabel || t.tokenModelUnknown}</small>
-            </div>
-            <div className="cnav-token-grid">
-              <span>{t.tokenViewport}</span>
-              <strong>{formatTokenCount(tokenStats.viewport)}</strong>
-              <span>{t.tokenBudget}</span>
-              <strong>{`${Math.round(tokenBudgetPercent)}%`}</strong>
-            </div>
-            <div className="cnav-token-progress" aria-hidden="true">
-              <span style={{ width: toPercent(tokenBudgetPercent) }} />
-            </div>
-            <div className="cnav-token-breakdown" aria-label={t.estimatedOnly}>
-              <span style={{ ["--share" as string]: toPercent(userPercent) }}>{t.tokenUserShare}</span>
-              <span style={{ ["--share" as string]: toPercent(assistantPercent) }}>{t.tokenAssistantShare}</span>
-              <span style={{ ["--share" as string]: toPercent(codePercent) }}>{t.tokenCodeShare}</span>
-              <span style={{ ["--share" as string]: toPercent(tablePercent) }}>{t.tokenTableShare}</span>
-            </div>
-            <div className="cnav-token-note">
-              <span>{tokenStats.budgetLabel}</span>
-              <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
-            </div>
+        <div className="cnav-token-body">
+          <div className="cnav-token-total">
+            <strong>{formatTokenCount(tokenStats.total)}</strong>
+            <span>{t.tokenTotal}</span>
+            <small>{tokenStats.modelLabel || t.tokenModelUnknown}</small>
           </div>
-        )}
+          <div className="cnav-token-grid">
+            <span>{t.tokenViewport}</span>
+            <strong>{formatTokenCount(tokenStats.viewport)}</strong>
+            <span>{t.tokenBudget}</span>
+            <strong>{`${Math.round(tokenBudgetPercent)}%`}</strong>
+          </div>
+          <div className="cnav-token-progress" aria-hidden="true">
+            <span style={{ width: toPercent(tokenBudgetPercent) }} />
+          </div>
+          <div className="cnav-token-breakdown" aria-label={t.estimatedOnly}>
+            <span style={{ ["--share" as string]: toPercent(userPercent) }}>{t.tokenUserShare}</span>
+            <span style={{ ["--share" as string]: toPercent(assistantPercent) }}>{t.tokenAssistantShare}</span>
+            <span style={{ ["--share" as string]: toPercent(codePercent) }}>{t.tokenCodeShare}</span>
+            <span style={{ ["--share" as string]: toPercent(tablePercent) }}>{t.tokenTableShare}</span>
+          </div>
+          <div className="cnav-token-note">
+            <span>{tokenStats.budgetLabel}</span>
+            <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
+          </div>
+        </div>
       </section>
     );
   };
@@ -2235,7 +2136,6 @@ function ConversationNavigator() {
         </>
       ) : null}
 
-      {settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null}
       {settings.minimapMode === "page-edge" ? renderMinimap("page-edge") : null}
 
       <aside
@@ -2377,18 +2277,6 @@ function ConversationNavigator() {
                 />
               </label>
               <label className="cnav-display-field cnav-select-field">
-                <span>{t.tokenPanel}</span>
-                <select
-                  value={settings.tokenPanelMode}
-                  onChange={(event) =>
-                    updateSettings({ tokenPanelMode: event.currentTarget.value === "dock" ? "dock" : "floating" })
-                  }
-                >
-                  <option value="floating">{t.tokenPanelFloating}</option>
-                  <option value="dock">{t.tokenPanelDock}</option>
-                </select>
-              </label>
-              <label className="cnav-display-field cnav-select-field">
                 <span>{t.tokenBudget}</span>
                 <select
                   value={
@@ -2477,7 +2365,7 @@ function ConversationNavigator() {
             </div>
           ) : null}
 
-          {settings.tokenPanelMode === "dock" ? renderTokenPanel("dock") : null}
+          {renderTokenPanel()}
 
           <div className="cnav-controls">
             <label className="cnav-search">
