@@ -1,0 +1,230 @@
+/* src/styles/popup.css */
+body {
+  min-width: 320px;
+  margin: 0;
+  background: #f7f7f8;
+  color: #202123;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  letter-spacing: 0;
+}
+button {
+  font: inherit;
+}
+.popup-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+.popup-header {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.popup-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      135deg,
+      #111827,
+      #2563eb);
+  color: #ffffff;
+}
+.popup-header h1 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.popup-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.popup-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.popup-stats div {
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 8px;
+  background: #ffffff;
+}
+.popup-stat-value {
+  display: block;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+}
+.popup-stat-label {
+  display: block;
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.popup-privacy {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid rgba(22, 163, 74, 0.25);
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+}
+.popup-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 8px;
+  background: #ffffff;
+}
+.popup-settings-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #202123;
+  font-size: 13px;
+  font-weight: 750;
+}
+.popup-settings-title small {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+.popup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.popup-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.popup-field select,
+.popup-field input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: #f7f7f8;
+  color: #202123;
+  font: inherit;
+  outline: 0;
+  padding: 0 10px;
+}
+.popup-field select:focus,
+.popup-field input:focus {
+  border-color: rgba(37, 99, 235, 0.65);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+.popup-settings p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.popup-privacy p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+code {
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.08);
+  padding: 1px 4px;
+  color: inherit;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 11px;
+}
+.popup-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #b91c1c;
+  cursor: pointer;
+  font-weight: 700;
+}
+.popup-clear:hover:not(:disabled) {
+  background: #fef2f2;
+}
+.popup-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.popup-footnote {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #171717;
+    color: #ececf1;
+  }
+  .popup-header p,
+  .popup-stat-label,
+  .popup-footnote,
+  .popup-settings-title small,
+  .popup-settings p,
+  .popup-field span {
+    color: #a8adb7;
+  }
+  .popup-stats div,
+  .popup-settings,
+  .popup-clear {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: #212121;
+  }
+  .popup-settings-title {
+    color: #ececf1;
+  }
+  .popup-field select,
+  .popup-field input {
+    border-color: rgba(255, 255, 255, 0.13);
+    background: #171717;
+    color: #ececf1;
+  }
+  code {
+    background: rgba(255, 255, 255, 0.09);
+  }
+}
+/*# sourceMappingURL=popup.css.map */

@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../src/background.ts"],
+  "sourcesContent": ["chrome.runtime.onInstalled.addListener(() => {\n  chrome.storage.local.get(\"conversationNavigator:installedAt\", (result) => {\n    if (!result[\"conversationNavigator:installedAt\"]) {\n      chrome.storage.local.set({\n        \"conversationNavigator:installedAt\": Date.now()\n      });\n    }\n  });\n});\n"],
+  "mappings": ";AAAA,OAAO,QAAQ,YAAY,YAAY,MAAM;AAC3C,SAAO,QAAQ,MAAM,IAAI,qCAAqC,CAAC,WAAW;AACxE,QAAI,CAAC,OAAO,mCAAmC,GAAG;AAChD,aAAO,QAAQ,MAAM,IAAI;AAAA,QACvB,qCAAqC,KAAK,IAAI;AAAA,MAChD,CAAC;AAAA,IACH;AAAA,EACF,CAAC;AACH,CAAC;",
+  "names": []
+}
