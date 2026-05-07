@@ -4,6 +4,9 @@ export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
 
 export type CacheMode = "chrome" | "page" | "off";
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
+export type TokenPanelMode = "floating" | "dock";
+export type TokenBudgetMode = "auto" | "manual";
+export type MinimapMode = "page-edge" | "dock";
 
 export interface StoredNavigatorNode {
   id: string;
@@ -11,6 +14,10 @@ export interface StoredNavigatorNode {
   answerSummary: string;
   turnIndex: number;
   favorite: boolean;
+  promptTokens?: number;
+  answerTokens?: number;
+  totalTokens?: number;
+  heatLevel?: number;
   updatedAt: number;
 }
 
@@ -35,6 +42,15 @@ export interface NavigatorSettings {
   chatLayoutVersion: 2;
   chatContentWidth: number;
   autoCollapseOnOutsideClick: boolean;
+  tokenPanelEnabled: boolean;
+  tokenPanelMode: TokenPanelMode;
+  tokenPanelCollapsed: boolean;
+  tokenBudgetMode: TokenBudgetMode;
+  manualTokenBudget: number;
+  tokenHudX: number;
+  tokenHudY: number;
+  minimapEnabled: boolean;
+  minimapMode: MinimapMode;
 }
 
 export const DEFAULT_SETTINGS: NavigatorSettings = {
@@ -46,7 +62,16 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   chatLetterSpacing: 0,
   chatLayoutVersion: 2,
   chatContentWidth: 60,
-  autoCollapseOnOutsideClick: false
+  autoCollapseOnOutsideClick: false,
+  tokenPanelEnabled: true,
+  tokenPanelMode: "floating",
+  tokenPanelCollapsed: false,
+  tokenBudgetMode: "auto",
+  manualTokenBudget: 128000,
+  tokenHudX: 0,
+  tokenHudY: 0,
+  minimapEnabled: true,
+  minimapMode: "page-edge"
 };
 
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -73,6 +98,9 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
   const language: AppLanguage =
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
+  const tokenPanelMode: TokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
+  const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "auto";
+  const minimapMode: MinimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
   return {
@@ -84,7 +112,16 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 1.2, 0),
     chatLayoutVersion: 2,
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
-    autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick)
+    autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
+    tokenPanelEnabled: value?.tokenPanelEnabled !== false,
+    tokenPanelMode,
+    tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
+    tokenBudgetMode,
+    manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 1000000, 128000)),
+    tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
+    tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0)),
+    minimapEnabled: value?.minimapEnabled !== false,
+    minimapMode
   };
 }
 

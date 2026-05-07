@@ -7,10 +7,12 @@ Local-only MV3 extension that injects a React sidebar into ChatGPT pages.
 - Extracts user prompts and deterministic assistant-response summaries from the page DOM.
 - Adds a scrollable right-side navigator with clickable anchors.
 - Supports search, collapse, favorites, manual refresh, and active-node highlighting.
-- Adds a ChatGPT chat switcher that reads visible project and recent-chat links from the left sidebar for one-click switching.
+- Adds a local Token / Context estimate panel powered by `js-tiktoken` with floating and docked modes.
+- Adds a VS Code-style message minimap with page-edge and docked modes.
 - Adapts to ChatGPT light and dark themes.
 - Supports Simplified Chinese, Traditional Chinese, and English UI.
 - Lets you choose the local cache target: extension `chrome.storage.local`, ChatGPT page `localStorage`, or no persistent cache.
+- Does not read hidden system prompts, hidden memory, or server-side safety layers.
 - Does not call ChatGPT, OpenAI APIs, or third-party services.
 
 ## Permissions
