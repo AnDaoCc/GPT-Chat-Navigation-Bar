@@ -181,30 +181,51 @@ const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
     aliases: ["auto", "instant", "current model", "chatgpt"]
   },
   {
+    id: "gpt-5.5-instant-free",
+    label: "GPT-5.5 Instant Free",
+    budget: 16000,
+    source: "built-in",
+    aliases: ["gpt-5.5 instant free", "gpt 5.5 instant free"]
+  },
+  {
     id: "gpt-5.5-instant",
     label: "GPT-5.5 Instant",
-    budget: 128000,
+    budget: 32000,
     source: "built-in",
     aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant"]
   },
   {
+    id: "gpt-5.5-instant-pro",
+    label: "GPT-5.5 Instant Pro",
+    budget: 128000,
+    source: "built-in",
+    aliases: ["gpt-5.5 instant pro", "gpt 5.5 instant pro", "gpt-5.5 instant enterprise"]
+  },
+  {
     id: "gpt-5.5-thinking",
     label: "GPT-5.5 Thinking",
-    budget: 400000,
+    budget: 256000,
     source: "built-in",
     aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking"]
   },
   {
+    id: "gpt-5.5-thinking-pro",
+    label: "GPT-5.5 Thinking Pro",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.5 thinking pro", "gpt 5.5 thinking pro", "gpt-5.5 thinking enterprise"]
+  },
+  {
     id: "gpt-5.5-pro",
     label: "GPT-5.5 Pro",
-    budget: 1050000,
+    budget: 400000,
     source: "built-in",
     aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro"]
   },
   {
     id: "gpt-5.5",
     label: "GPT-5.5",
-    budget: 1050000,
+    budget: 256000,
     source: "built-in",
     aliases: ["gpt-5.5", "gpt 5.5"]
   },
