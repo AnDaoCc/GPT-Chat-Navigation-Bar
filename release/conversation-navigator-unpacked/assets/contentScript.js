@@ -8050,163 +8050,60 @@
   var BUILT_IN_MODEL_BUDGETS = [
     {
       id: "chatgpt-auto",
-      label: "Auto current GPT",
+      label: "\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u6A21\u578B",
       budget: DEFAULT_TOKEN_BUDGET,
       source: "built-in",
-      aliases: ["auto", "instant", "current model", "chatgpt"]
-    },
-    {
-      id: "gpt-5.5-instant-free",
-      label: "GPT-5.5 Instant Free",
-      budget: 16e3,
-      source: "built-in",
-      aliases: ["gpt-5.5 instant free", "gpt 5.5 instant free"]
+      aliases: ["auto", "current model", "chatgpt"]
     },
     {
       id: "gpt-5.5-instant",
       label: "GPT-5.5 Instant",
       budget: 32e3,
       source: "built-in",
-      aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant"]
-    },
-    {
-      id: "gpt-5.5-instant-pro",
-      label: "GPT-5.5 Instant Pro",
-      budget: 128e3,
-      source: "built-in",
-      aliases: ["gpt-5.5 instant pro", "gpt 5.5 instant pro", "gpt-5.5 instant enterprise"]
+      aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant", "fast"]
     },
     {
       id: "gpt-5.5-thinking",
       label: "GPT-5.5 Thinking",
       budget: 256e3,
       source: "built-in",
-      aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking"]
-    },
-    {
-      id: "gpt-5.5-thinking-pro",
-      label: "GPT-5.5 Thinking Pro",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5.5 thinking pro", "gpt 5.5 thinking pro", "gpt-5.5 thinking enterprise"]
+      aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking", "reasoning"]
     },
     {
       id: "gpt-5.5-pro",
       label: "GPT-5.5 Pro",
       budget: 4e5,
       source: "built-in",
-      aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro"]
-    },
-    {
-      id: "gpt-5.5",
-      label: "GPT-5.5",
-      budget: 256e3,
-      source: "built-in",
-      aliases: ["gpt-5.5", "gpt 5.5"]
-    },
-    {
-      id: "gpt-5.4",
-      label: "GPT-5.4",
-      budget: 105e4,
-      source: "built-in",
-      aliases: ["gpt-5.4", "gpt 5.4"]
-    },
-    {
-      id: "gpt-5.4-mini",
-      label: "GPT-5.4 Mini",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5.4-mini", "gpt-5.4 mini", "gpt 5.4 mini"]
-    },
-    {
-      id: "gpt-5.4-nano",
-      label: "GPT-5.4 Nano",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5.4-nano", "gpt-5.4 nano", "gpt 5.4 nano"]
-    },
-    {
-      id: "gpt-5.2",
-      label: "GPT-5.2",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5.2", "gpt 5.2"]
-    },
-    {
-      id: "gpt-5.1",
-      label: "GPT-5.1",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5.1", "gpt 5.1"]
-    },
-    {
-      id: "gpt-5",
-      label: "GPT-5",
-      budget: 4e5,
-      source: "built-in",
-      aliases: ["gpt-5", "gpt 5"]
-    },
-    {
-      id: "gpt-5-chat",
-      label: "GPT-5 Chat",
-      budget: 128e3,
-      source: "built-in",
-      aliases: ["gpt-5 chat", "gpt-5-chat-latest", "gpt 5 chat"]
-    },
-    {
-      id: "gpt-4.1",
-      label: "GPT-4.1",
-      budget: 1047576,
-      source: "built-in",
-      aliases: ["gpt-4.1", "gpt 4.1", "gpt-4.1-mini", "gpt-4.1-nano"]
-    },
-    {
-      id: "gpt-4o",
-      label: "GPT-4o",
-      budget: 128e3,
-      source: "built-in",
-      aliases: ["gpt-4o", "gpt 4o", "4o", "gpt-4o-mini"]
-    },
-    {
-      id: "o-series",
-      label: "o3 / o4",
-      budget: 2e5,
-      source: "built-in",
-      aliases: ["o3", "o4", "o4-mini", "o3-mini", "o1", "o1-pro"]
-    },
-    {
-      id: "gpt-4-turbo",
-      label: "GPT-4 Turbo",
-      budget: 128e3,
-      source: "built-in",
-      aliases: ["gpt-4-turbo", "gpt 4 turbo", "gpt-4-turbo-preview"]
-    },
-    {
-      id: "gpt-4",
-      label: "GPT-4",
-      budget: 32e3,
-      source: "built-in",
-      aliases: ["gpt-4", "gpt 4", "gpt-4-32k"]
-    },
-    {
-      id: "gpt-3.5",
-      label: "GPT-3.5",
-      budget: 16e3,
-      source: "built-in",
-      aliases: ["gpt-3.5", "gpt 3.5", "gpt-3.5-turbo"]
+      aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro", "pro"]
     }
   ];
   var OPENAI_MODEL_SYNC_URLS = [
     "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
-    "https://developers.openai.com/api/docs/models",
-    "https://developers.openai.com/api/docs/models/compare",
-    "https://developers.openai.com/api/docs/models/gpt-5.5",
-    "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
-    "https://platform.openai.com/docs/models",
-    "https://platform.openai.com/docs/models/compare",
-    "https://openai.com/index/",
-    "https://help.openai.com/en/articles/11909943"
+    "https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-55-in-chatgpt",
+    "https://help.openai.com/en/articles/6825453-chatgpt-release-notes",
+    "https://openai.com/index/gpt-5-5-instant/",
+    "https://openai.com/index/introducing-gpt-5-5/",
+    "https://platform.openai.com/docs/deprecations",
+    "https://platform.openai.com/docs/models"
   ];
+  var RETIRED_CHATGPT_MODEL_IDS = /* @__PURE__ */ new Set([
+    "gpt-3.5",
+    "gpt-4",
+    "gpt-4-turbo",
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-5",
+    "gpt-5-chat",
+    "gpt-5.1",
+    "gpt-5.2",
+    "o-series",
+    "o1",
+    "o3",
+    "o4",
+    "o4-mini"
+  ]);
+  var NON_CHATGPT_MODEL_PATTERN = /(audio|realtime|transcribe|tts|image|vision|sora|embedding|moderation|codex|computer-use|deep-research|search|davinci|babbage|whisper|dall)/i;
+  var MODEL_MODE_ORDER = ["instant", "thinking", "pro", "base"];
   var CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chat.openai.com", "chatgpt.com"]);
   var siteAdapters = [
     {
@@ -8450,6 +8347,17 @@
       }
     }
     return normalizeText(parts.join(" "));
+  }
+  function isVisibleElement(element) {
+    if (element.closest(`#${ROOT_ID}`)) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
   }
   function inferRole(element) {
     const explicitRole = element.getAttribute("data-message-author-role");
@@ -8861,22 +8769,103 @@
     }
     return String(value);
   }
+  function normalizeDetectedChatGptModelLabel(value) {
+    const text = normalizeText(value).replace(/\b(model|mode|当前模型|模型)\b\s*[:：]?\s*/gi, "").trim();
+    const lower = text.toLowerCase();
+    if (!text || text.length > 72 || /token|预算|local estimate|copy|share|settings|导航器|navigator/i.test(text)) {
+      return "";
+    }
+    const explicit = text.match(/\bGPT\s*[- ]?\s*(\d+(?:\.\d+)?)(?:\s*[- ]?\s*(instant|thinking|pro))?\b/i);
+    if (explicit) {
+      const version = explicit[1];
+      const mode = explicit[2]?.toLowerCase();
+      if (mode === "instant") {
+        return `GPT-${version} Instant`;
+      }
+      if (mode === "thinking") {
+        return `GPT-${version} Thinking`;
+      }
+      if (mode === "pro") {
+        return `GPT-${version} Pro`;
+      }
+      return `GPT-${version}`;
+    }
+    if (/^(instant|fast)$/i.test(text) || /\binstant\b/.test(lower)) {
+      return "GPT-5.5 Instant";
+    }
+    if (/^(thinking|reasoning)$/i.test(text) || /\bthinking\b/.test(lower)) {
+      return "GPT-5.5 Thinking";
+    }
+    if (/^pro$/i.test(text) || /\bgpt\b.*\bpro\b/i.test(text)) {
+      return "GPT-5.5 Pro";
+    }
+    return "";
+  }
+  function scoreModelCandidate(element, normalizedLabel, rawText) {
+    let score = 0;
+    const testId = element.getAttribute("data-testid") || "";
+    const ariaLabel = element.getAttribute("aria-label") || "";
+    const text = normalizeText(rawText);
+    if (/model|gpt/i.test(testId) || /model|gpt/i.test(ariaLabel)) {
+      score += 40;
+    }
+    if (/^(Instant|Thinking|Pro)$/i.test(text)) {
+      score += 34;
+    }
+    if (/GPT[- ]?\d/i.test(text)) {
+      score += 30;
+    }
+    if (element.closest("form, main")) {
+      score += 12;
+    }
+    if (element.matches("button, [role='button']")) {
+      score += 8;
+    }
+    if (/Thinking|Pro/.test(normalizedLabel)) {
+      score += 6;
+    }
+    return score - Math.max(0, text.length - 32);
+  }
   function detectModelLabel() {
     const selectors = [
-      '[data-testid*="model"]',
+      '[data-testid*="model" i]',
       '[aria-label*="model" i]',
       '[aria-label*="GPT" i]',
-      "header button"
+      "main form button",
+      "form button",
+      "header button",
+      "button",
+      '[role="button"]'
     ];
+    let best = null;
     for (const selector of selectors) {
       for (const element of safeQueryAll(selector)) {
-        const text = normalizeText(element.innerText || element.getAttribute("aria-label") || "");
-        if (/(gpt|chatgpt|o[1345]|model|thinking|auto)/i.test(text) && text.length <= 80) {
-          return text;
+        if (!isVisibleElement(element) || element.closest(`#${ROOT_ID}`)) {
+          continue;
+        }
+        const textValues = [
+          element.innerText,
+          element.getAttribute("aria-label"),
+          element.getAttribute("title")
+        ].filter(Boolean);
+        for (const rawText of textValues) {
+          const label = normalizeDetectedChatGptModelLabel(rawText);
+          if (!label) {
+            continue;
+          }
+          const rawNormalized = normalizeText(rawText);
+          const modelishAttributes = `${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`;
+          if (/^Pro$/i.test(rawNormalized) && !element.closest("form, main") && !/model|gpt/i.test(modelishAttributes)) {
+            continue;
+          }
+          const score = scoreModelCandidate(element, label, rawText);
+          if (!best || score > best.score) {
+            best = { label, score };
+          }
         }
       }
     }
-    return "";
+    return best?.label ?? "";
   }
   function parseBudgetText(value) {
     const normalized = value.replace(/,/g, "").trim().toLowerCase();
@@ -8911,6 +8900,32 @@
       ...aliases
     ].filter(Boolean)));
   }
+  function defaultBudgetForModelId(id) {
+    if (/\bpro\b/.test(id)) {
+      return 4e5;
+    }
+    if (/\bthinking\b/.test(id)) {
+      return 256e3;
+    }
+    if (/\binstant\b/.test(id)) {
+      return 32e3;
+    }
+    return DEFAULT_TOKEN_BUDGET;
+  }
+  function createModelEntry(rawName, budget, aliases = []) {
+    const id = normalizeModelId(rawName);
+    if (!id || !/^gpt-\d/.test(id) || NON_CHATGPT_MODEL_PATTERN.test(id)) {
+      return null;
+    }
+    const label = formatModelLabelFromId(id);
+    return {
+      id,
+      label,
+      budget: budget && budget >= 8e3 ? Math.round(budget) : defaultBudgetForModelId(id),
+      source: "openai",
+      aliases: makeModelAliases(id, label, aliases)
+    };
+  }
   function parseOnlineModelCatalog(text) {
     try {
       const parsed = JSON.parse(text);
@@ -8920,19 +8935,12 @@
       const models = [];
       for (const model of parsed.models) {
         const budget = Number(model.budget);
-        const id = normalizeModelId(String(model.id || model.label || ""));
-        const label = model.label ? String(model.label) : id ? formatModelLabelFromId(id) : "";
-        if (!id || !label || !Number.isFinite(budget) || budget < 8e3) {
+        const aliases = Array.isArray(model.aliases) ? model.aliases.map((alias) => String(alias)) : [];
+        const entry = createModelEntry(String(model.id || model.label || ""), budget, aliases);
+        if (!entry) {
           continue;
         }
-        const aliases = Array.isArray(model.aliases) ? model.aliases.map((alias) => String(alias)) : [];
-        models.push({
-          id,
-          label,
-          budget: Math.round(budget),
-          source: "openai",
-          aliases: makeModelAliases(id, label, aliases)
-        });
+        models.push(entry);
       }
       return models;
     } catch {
@@ -8947,19 +8955,16 @@
     const models = /* @__PURE__ */ new Map();
     const budgetPattern = "((?:\\d{1,3},)*\\d{3,}|\\d+(?:\\.\\d+)?\\s*[mk])";
     const addModel = (rawName, rawBudget) => {
-      const id = normalizeModelId(rawName);
       const budget = parseBudgetText(rawBudget);
-      if (!id || !budget) {
+      const entry = createModelEntry(rawName, budget);
+      if (!entry) {
         return;
       }
-      const existing = models.get(id);
-      const label = existing?.label ?? formatModelLabelFromId(id);
-      models.set(id, {
-        id,
-        label,
-        budget: Math.max(existing?.budget ?? 0, budget),
-        source: "openai",
-        aliases: makeModelAliases(id, label, existing?.aliases)
+      const existing = models.get(entry.id);
+      models.set(entry.id, {
+        ...entry,
+        budget: Math.max(existing?.budget ?? 0, entry.budget),
+        aliases: makeModelAliases(entry.id, entry.label, existing?.aliases)
       });
     };
     for (const match of normalized.matchAll(new RegExp(`\\bModel ID\\s+([a-z0-9][a-z0-9_.-]*(?:-[a-z0-9_.-]+)*)[\\s\\S]{0,900}?\\bContext window\\s+${budgetPattern}`, "gi"))) {
@@ -8972,6 +8977,39 @@
       addModel(match[1], match[2]);
     }
     return Array.from(models.values());
+  }
+  function parseCurrentChatGptModelsFromDocs(text) {
+    const normalized = cleanModelDocText(text);
+    const models = /* @__PURE__ */ new Map();
+    for (const match of normalized.matchAll(/\bGPT\s*[- ]?\s*(\d+(?:\.\d+)?)(?:\s*[- ]?\s*(Instant|Thinking|Pro))?\b/gi)) {
+      const rawName = `gpt-${match[1]}${match[2] ? `-${match[2].toLowerCase()}` : ""}`;
+      const index = match.index ?? 0;
+      const context = normalized.slice(Math.max(0, index - 160), index + 260).toLowerCase();
+      if (/(retired|deprecated|deprecat|removed|legacy|sunset|淘汰|弃用)/i.test(context)) {
+        continue;
+      }
+      const entry = createModelEntry(rawName);
+      if (entry) {
+        models.set(entry.id, entry);
+      }
+    }
+    return Array.from(models.values());
+  }
+  function parseRetiredModelIdsFromDocs(text) {
+    const normalized = cleanModelDocText(text);
+    const retiredIds = /* @__PURE__ */ new Set();
+    for (const match of normalized.matchAll(/\b(?:GPT\s*[- ]?\s*\d+(?:\.\d+)?(?:\s*[- ]?\s*(?:Instant|Thinking|Pro))?|gpt-[a-z0-9_.-]+|o\d(?:-mini)?)\b/gi)) {
+      const id = normalizeModelId(match[0]);
+      if (!id) {
+        continue;
+      }
+      const index = match.index ?? 0;
+      const context = normalized.slice(Math.max(0, index - 220), index + 340).toLowerCase();
+      if (/(retired|deprecated|deprecat|legacy|sunset|shut down|shutdown|removed|removal|replaced by|no longer available|淘汰|弃用)/i.test(context)) {
+        retiredIds.add(id);
+      }
+    }
+    return retiredIds;
   }
   function fetchTextFromBackground(url, timeoutMs) {
     return new Promise((resolve, reject) => {
@@ -9023,26 +9061,134 @@
       window.clearTimeout(timer);
     }
   }
-  function mergeModelCatalog(models) {
+  function getModelVersion(model) {
+    const match = model.id.match(/^gpt-(\d+)(?:\.(\d+))?/);
+    if (!match) {
+      return null;
+    }
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2] ?? 0)
+    };
+  }
+  function getModelLine(model) {
+    const match = model.id.match(/^gpt-\d+(?:\.\d+)?/);
+    return match?.[0] ?? model.id;
+  }
+  function getModelMode(model) {
+    const lower = `${model.id} ${model.label}`.toLowerCase();
+    if (/\binstant\b/.test(lower)) {
+      return "instant";
+    }
+    if (/\bthinking\b/.test(lower)) {
+      return "thinking";
+    }
+    if (/\bpro\b/.test(lower)) {
+      return "pro";
+    }
+    return "base";
+  }
+  function compareModelVersion(a, b) {
+    const aVersion = getModelVersion(a);
+    const bVersion = getModelVersion(b);
+    if (!aVersion || !bVersion) {
+      return 0;
+    }
+    return aVersion.major === bVersion.major ? aVersion.minor - bVersion.minor : aVersion.major - bVersion.major;
+  }
+  function isCurrentChatGptModel(model, retiredIds = RETIRED_CHATGPT_MODEL_IDS) {
+    if (model.id === "chatgpt-auto") {
+      return true;
+    }
+    if (retiredIds.has(model.id) || NON_CHATGPT_MODEL_PATTERN.test(model.id)) {
+      return false;
+    }
+    return /^gpt-\d/.test(model.id);
+  }
+  function sortModelCatalog(models) {
+    return [...models].sort((a, b) => {
+      if (a.id === "chatgpt-auto") {
+        return -1;
+      }
+      if (b.id === "chatgpt-auto") {
+        return 1;
+      }
+      const versionDiff = compareModelVersion(b, a);
+      if (versionDiff !== 0) {
+        return versionDiff;
+      }
+      const modeDiff = MODEL_MODE_ORDER.indexOf(getModelMode(a)) - MODEL_MODE_ORDER.indexOf(getModelMode(b));
+      if (modeDiff !== 0) {
+        return modeDiff;
+      }
+      return a.label.localeCompare(b.label);
+    });
+  }
+  function curateModelCatalog(models, dynamicRetiredIds = /* @__PURE__ */ new Set()) {
+    const retiredIds = /* @__PURE__ */ new Set([...RETIRED_CHATGPT_MODEL_IDS, ...dynamicRetiredIds]);
     const byId = /* @__PURE__ */ new Map();
     for (const model of [...BUILT_IN_MODEL_BUDGETS, ...models]) {
+      if (!isCurrentChatGptModel(model, retiredIds)) {
+        continue;
+      }
       const existing = byId.get(model.id);
-      byId.set(model.id, existing ? { ...existing, ...model } : model);
+      byId.set(model.id, existing ? {
+        ...existing,
+        ...model,
+        aliases: makeModelAliases(model.id, model.label, [...existing.aliases, ...model.aliases])
+      } : {
+        ...model,
+        aliases: makeModelAliases(model.id, model.label, model.aliases)
+      });
     }
-    return Array.from(byId.values());
+    const currentModels = Array.from(byId.values()).filter((model) => model.id !== "chatgpt-auto");
+    const latestVersion = currentModels.reduce((latest, model) => {
+      if (!latest) {
+        return model;
+      }
+      return compareModelVersion(model, latest) > 0 ? model : latest;
+    }, null);
+    if (latestVersion) {
+      const latestLine = getModelLine(latestVersion);
+      for (const model of currentModels) {
+        if (getModelLine(model) !== latestLine) {
+          byId.delete(model.id);
+        }
+      }
+    }
+    const modeCounts = /* @__PURE__ */ new Map();
+    for (const model of byId.values()) {
+      const mode = getModelMode(model);
+      modeCounts.set(mode, (modeCounts.get(mode) ?? 0) + 1);
+    }
+    for (const model of byId.values()) {
+      if (model.id === "chatgpt-auto") {
+        continue;
+      }
+      const mode = getModelMode(model);
+      if (mode === "base" && (modeCounts.get("instant") || modeCounts.get("thinking") || modeCounts.get("pro"))) {
+        byId.delete(model.id);
+      }
+    }
+    return sortModelCatalog(Array.from(byId.values())).slice(0, 7);
   }
   async function syncOpenAiModelCatalog() {
     const pages = await Promise.allSettled(OPENAI_MODEL_SYNC_URLS.map((url) => fetchTextWithTimeout(url)));
     const fetchedText = pages.filter((result) => result.status === "fulfilled").map((result) => result.value);
     const onlineModels = fetchedText.flatMap(parseOnlineModelCatalog);
     const dynamicModels = fetchedText.flatMap(parseDynamicModelBudgetsFromDocs);
+    const currentChatGptModels = fetchedText.flatMap(parseCurrentChatGptModelsFromDocs);
+    const retiredIds = fetchedText.reduce((ids, text) => {
+      for (const id of parseRetiredModelIdsFromDocs(text)) {
+        ids.add(id);
+      }
+      return ids;
+    }, /* @__PURE__ */ new Set());
     const joined = fetchedText.join("\n");
-    if (!joined && onlineModels.length === 0 && dynamicModels.length === 0) {
+    if (!joined && onlineModels.length === 0 && dynamicModels.length === 0 && currentChatGptModels.length === 0) {
       throw new Error("No OpenAI model docs fetched");
     }
-    const builtInIds = new Set(BUILT_IN_MODEL_BUDGETS.map((model) => model.id));
-    const discoveredModels = dynamicModels.filter((model) => !builtInIds.has(model.id));
-    return mergeModelCatalog([...discoveredModels, ...onlineModels]);
+    return curateModelCatalog([...currentChatGptModels, ...dynamicModels, ...onlineModels], retiredIds);
   }
   function findModelBudget(modelCatalog, modelId) {
     return modelCatalog.find((model) => model.id === modelId);
@@ -9062,7 +9208,7 @@
         budgetLabel: `${formatTokenCount(settings.manualTokenBudget)}`
       };
     }
-    const selectedModel = settings.tokenModelId === "chatgpt-auto" ? detectModelBudget(modelCatalog, modelLabel) : findModelBudget(modelCatalog, settings.tokenModelId);
+    const selectedModel = settings.tokenModelId === "chatgpt-auto" ? detectModelBudget(modelCatalog, modelLabel) : findModelBudget(modelCatalog, settings.tokenModelId) ?? detectModelBudget(modelCatalog, modelLabel);
     const budget = selectedModel?.budget ?? DEFAULT_TOKEN_BUDGET;
     return {
       budget,
@@ -9232,7 +9378,7 @@
           return;
         }
         if (stored?.models?.length) {
-          const models = mergeModelCatalog(stored.models);
+          const models = curateModelCatalog(stored.models);
           setModelCatalog(models);
           setModelCatalogUpdatedAt(stored.updatedAt || 0);
         }
@@ -9480,6 +9626,7 @@
       () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
       [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
     );
+    const selectedTokenModelId = modelCatalog.some((model) => model.id === settings.tokenModelId) ? settings.tokenModelId : "chatgpt-auto";
     const tokenBudgetPercent = tokenStats.budget > 0 ? tokenStats.total / tokenStats.budget * 100 : 0;
     const syncStatusLabel = modelSyncStatus === "syncing" ? t.tokenModelSyncing : modelSyncStatus === "synced" ? t.tokenModelSynced : modelSyncStatus === "failed" ? t.tokenModelSyncFailed : t.tokenModelSync;
     const hudPosition = tokenHudDraft ?? (settings.tokenHudX > 0 || settings.tokenHudY > 0 ? { x: settings.tokenHudX, y: settings.tokenHudY } : null);
@@ -9923,7 +10070,7 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "select",
                   {
-                    value: settings.tokenModelId,
+                    value: selectedTokenModelId,
                     onChange: (event) => updateSettings({ tokenModelId: event.currentTarget.value }),
                     children: modelCatalog.map((model) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: model.id, children: model.id === "chatgpt-auto" ? t.tokenModelAuto : `${model.label} \xB7 ${formatTokenCount(model.budget)}` }, model.id))
                   }
@@ -9947,7 +10094,7 @@
                   {
                     type: "number",
                     min: "8000",
-                    max: "1000000",
+                    max: "2000000",
                     step: "1000",
                     value: settings.manualTokenBudget,
                     onChange: (event) => updateSettings({ manualTokenBudget: Number(event.currentTarget.value) })

@@ -10,14 +10,13 @@ chrome.runtime.onInstalled.addListener(() => {
 
 const MODEL_SYNC_ALLOWED_URLS = [
   "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
-  "https://developers.openai.com/api/docs/models",
-  "https://developers.openai.com/api/docs/models/compare",
-  "https://developers.openai.com/api/docs/models/gpt-5.5",
-  "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+  "https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-55-in-chatgpt",
+  "https://help.openai.com/en/articles/6825453-chatgpt-release-notes",
+  "https://openai.com/index/gpt-5-5-instant/",
+  "https://openai.com/index/introducing-gpt-5-5/",
+  "https://platform.openai.com/docs/deprecations",
   "https://platform.openai.com/docs/models",
-  "https://platform.openai.com/docs/models/compare",
-  "https://openai.com/index/",
-  "https://help.openai.com/en/articles/11909943"
+  "https://openai.com/index/"
 ];
 
 function isAllowedModelSyncUrl(value: string): boolean {
@@ -25,7 +24,10 @@ function isAllowedModelSyncUrl(value: string): boolean {
     const url = new URL(value);
     return MODEL_SYNC_ALLOWED_URLS.some((allowed) => value === allowed || value.startsWith(`${allowed}/`)) ||
       (url.hostname === "developers.openai.com" && url.pathname.startsWith("/api/docs/models")) ||
-      (url.hostname === "platform.openai.com" && url.pathname.startsWith("/docs/models")) ||
+      (url.hostname === "platform.openai.com" && (
+        url.pathname.startsWith("/docs/models") ||
+        url.pathname.startsWith("/docs/deprecations")
+      )) ||
       (url.hostname === "openai.com" && url.pathname.startsWith("/index/")) ||
       (url.hostname === "help.openai.com" && url.pathname.startsWith("/en/articles/"));
   } catch {
