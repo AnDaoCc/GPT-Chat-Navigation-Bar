@@ -8911,26 +8911,6 @@
       ...aliases
     ].filter(Boolean)));
   }
-  function parseModelBudgetFromDocs(text, model) {
-    const normalized = text.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-    const lower = normalized.toLowerCase();
-    for (const alias of [model.label, ...model.aliases]) {
-      const index = lower.indexOf(alias.toLowerCase());
-      if (index < 0) {
-        continue;
-      }
-      const snippet = normalized.slice(Math.max(0, index - 500), index + 1400);
-      const contextMatch = snippet.match(/((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])\s*(?:token[s]?\s*)?(?:context|context window|window)/i) ?? snippet.match(/(?:context|context window|window)[^0-9]{0,80}((?:\d{1,3},)*\d{3,}|\d+(?:\.\d+)?\s*[mk])/i);
-      if (!contextMatch?.[1]) {
-        continue;
-      }
-      const parsed = parseBudgetText(contextMatch[1]);
-      if (parsed) {
-        return parsed;
-      }
-    }
-    return null;
-  }
   function parseOnlineModelCatalog(text) {
     try {
       const parsed = JSON.parse(text);
@@ -9060,11 +9040,9 @@
     if (!joined && onlineModels.length === 0 && dynamicModels.length === 0) {
       throw new Error("No OpenAI model docs fetched");
     }
-    const synced = BUILT_IN_MODEL_BUDGETS.map((model) => {
-      const parsed = model.id === "chatgpt-auto" ? null : parseModelBudgetFromDocs(joined, model);
-      return parsed ? { ...model, budget: parsed, source: "openai" } : model;
-    });
-    return mergeModelCatalog([...synced, ...dynamicModels, ...onlineModels]);
+    const builtInIds = new Set(BUILT_IN_MODEL_BUDGETS.map((model) => model.id));
+    const discoveredModels = dynamicModels.filter((model) => !builtInIds.has(model.id));
+    return mergeModelCatalog([...discoveredModels, ...onlineModels]);
   }
   function findModelBudget(modelCatalog, modelId) {
     return modelCatalog.find((model) => model.id === modelId);
