@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "GPT聊天导航器",
-  "version": "2026.2.0",
-  "version_name": "2026-V2beta",
-  "description": "GPT聊天导航器：为 ChatGPT 增加本地对话导航、Token 估算、缩略导航和显示调节。",
+  "version": "2026.2.1",
+  "version_name": "2026-V2beta2",
+  "description": "GPT聊天导航器：为 ChatGPT 增加本地对话导航、Token 估算和显示调节。",
   "permissions": ["storage"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
     "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
-    "https://platform.openai.com/docs/models*"
+    "https://developers.openai.com/api/docs/models*",
+    "https://platform.openai.com/docs/models*",
+    "https://openai.com/index/*",
+    "https://help.openai.com/en/articles/*"
   ],
   "icons": {
     "16": "assets/icon16.png",

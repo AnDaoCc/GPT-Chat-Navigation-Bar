@@ -53,6 +53,10 @@ export const translations = {
     tokenPanel: "Token 面板",
     tokenPanelShort: "Token",
     tokenPanelEstimated: "本地估算",
+    tokenPanelFloating: "悬浮",
+    tokenPanelDock: "侧栏",
+    tokenPanelCollapse: "折叠 Token 面板",
+    tokenPanelExpand: "展开 Token 面板",
     tokenTotal: "总量",
     tokenViewport: "当前窗口",
     tokenBudget: "预算",
@@ -73,10 +77,6 @@ export const translations = {
     tokenTableShare: "表格",
     tokenHeat: "热区",
     tokenNoData: "等待对话内容",
-    minimap: "缩略导航",
-    minimapPageEdge: "页面边缘",
-    minimapDock: "侧栏",
-    minimapJump: "拖动或点击快速跳转",
     estimatedOnly: "仅基于页面可见内容估算"
   },
   "zh-TW": {
@@ -125,6 +125,10 @@ export const translations = {
     tokenPanel: "Token 面板",
     tokenPanelShort: "Token",
     tokenPanelEstimated: "本機估算",
+    tokenPanelFloating: "懸浮",
+    tokenPanelDock: "側欄",
+    tokenPanelCollapse: "收合 Token 面板",
+    tokenPanelExpand: "展開 Token 面板",
     tokenTotal: "總量",
     tokenViewport: "目前視窗",
     tokenBudget: "預算",
@@ -145,10 +149,6 @@ export const translations = {
     tokenTableShare: "表格",
     tokenHeat: "熱區",
     tokenNoData: "等待對話內容",
-    minimap: "縮略導覽",
-    minimapPageEdge: "頁面邊緣",
-    minimapDock: "側欄",
-    minimapJump: "拖動或點擊快速跳轉",
     estimatedOnly: "僅依頁面可見內容估算"
   },
   en: {
@@ -197,6 +197,10 @@ export const translations = {
     tokenPanel: "Token panel",
     tokenPanelShort: "Token",
     tokenPanelEstimated: "Local estimate",
+    tokenPanelFloating: "Floating",
+    tokenPanelDock: "Dock",
+    tokenPanelCollapse: "Collapse token panel",
+    tokenPanelExpand: "Expand token panel",
     tokenTotal: "Total",
     tokenViewport: "Current window",
     tokenBudget: "Budget",
@@ -217,10 +221,6 @@ export const translations = {
     tokenTableShare: "Tables",
     tokenHeat: "Heat",
     tokenNoData: "Waiting for conversation",
-    minimap: "Minimap",
-    minimapPageEdge: "Page edge",
-    minimapDock: "Dock",
-    minimapJump: "Drag or click to jump",
     estimatedOnly: "Estimated from visible page content only"
   }
 } as const;

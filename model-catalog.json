@@ -1,7 +1,49 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-05-07",
+  "updatedAt": "2026-05-08",
   "models": [
+    {
+      "id": "gpt-5.5-instant",
+      "label": "GPT-5.5 Instant",
+      "budget": 128000,
+      "aliases": ["gpt-5.5 instant", "gpt 5.5 instant", "instant"]
+    },
+    {
+      "id": "gpt-5.5-thinking",
+      "label": "GPT-5.5 Thinking",
+      "budget": 400000,
+      "aliases": ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking"]
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "label": "GPT-5.5 Pro",
+      "budget": 1050000,
+      "aliases": ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro"]
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "budget": 1050000,
+      "aliases": ["gpt-5.5", "gpt 5.5"]
+    },
+    {
+      "id": "gpt-5.4",
+      "label": "GPT-5.4",
+      "budget": 1050000,
+      "aliases": ["gpt-5.4", "gpt 5.4"]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "budget": 400000,
+      "aliases": ["gpt-5.4-mini", "gpt-5.4 mini", "gpt 5.4 mini"]
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "budget": 400000,
+      "aliases": ["gpt-5.4-nano", "gpt-5.4 nano", "gpt 5.4 nano"]
+    },
     {
       "id": "gpt-5.2",
       "label": "GPT-5.2",

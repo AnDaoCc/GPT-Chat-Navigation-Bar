@@ -3,8 +3,10 @@ import { createRoot } from "react-dom/client";
 import {
   BarChart3,
   ChevronRight,
+  ChevronsUpDown,
+  GripVertical,
   Languages,
-  Map as MapIcon,
+  Minimize2,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -37,11 +39,12 @@ const THREAD_WIDTH_MAX = 100;
 const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
 const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const MINIMAP_MAX_BLOCKS = 220;
-const EDGE_MINIMAP_RIGHT_GAP = 72;
+const DEFAULT_HUD_WIDTH = 246;
+const DEFAULT_HUD_GAP = 26;
 const TEXT_CONTROL_SELECTOR = [
   "button",
   '[role="button"]',
+  '[role="menuitem"]',
   "select",
   "textarea",
   "input",
@@ -52,8 +55,17 @@ const TEXT_IGNORED_CONTAINER_SELECTOR = [
   "style",
   "noscript",
   "svg",
+  "menu",
+  '[role="menu"]',
+  '[role="toolbar"]',
   "[hidden]",
-  '[aria-hidden="true"]'
+  '[aria-hidden="true"]',
+  '[data-testid*="copy" i]',
+  '[data-testid*="clipboard" i]',
+  '[data-testid*="action" i]',
+  '[data-testid*="toolbar" i]',
+  '[class*="copy" i]',
+  '[class*="toolbar" i]'
 ].join(",");
 
 type Role = "user" | "assistant";
@@ -79,7 +91,6 @@ interface NavigatorItem {
   answerSummary: string;
   turnIndex: number;
   favorite: boolean;
-  legacyIds?: string[];
   promptTokens: number;
   answerTokens: number;
   totalTokens: number;
@@ -125,19 +136,6 @@ interface ViewportMetrics {
   heightRatio: number;
 }
 
-interface MinimapBlock {
-  id: string;
-  role: Role | "mixed";
-  top: number;
-  height: number;
-  heatLevel: HeatLevel;
-  tokenCount: number;
-  active: boolean;
-  visible: boolean;
-  favorite: boolean;
-  queryMatch: boolean;
-}
-
 interface ModelBudgetEntry {
   id: string;
   label: string;
@@ -181,6 +179,55 @@ const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
     budget: DEFAULT_TOKEN_BUDGET,
     source: "built-in",
     aliases: ["auto", "instant", "current model", "chatgpt"]
+  },
+  {
+    id: "gpt-5.5-instant",
+    label: "GPT-5.5 Instant",
+    budget: 128000,
+    source: "built-in",
+    aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant"]
+  },
+  {
+    id: "gpt-5.5-thinking",
+    label: "GPT-5.5 Thinking",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking"]
+  },
+  {
+    id: "gpt-5.5-pro",
+    label: "GPT-5.5 Pro",
+    budget: 1050000,
+    source: "built-in",
+    aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro"]
+  },
+  {
+    id: "gpt-5.5",
+    label: "GPT-5.5",
+    budget: 1050000,
+    source: "built-in",
+    aliases: ["gpt-5.5", "gpt 5.5"]
+  },
+  {
+    id: "gpt-5.4",
+    label: "GPT-5.4",
+    budget: 1050000,
+    source: "built-in",
+    aliases: ["gpt-5.4", "gpt 5.4"]
+  },
+  {
+    id: "gpt-5.4-mini",
+    label: "GPT-5.4 Mini",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.4-mini", "gpt-5.4 mini", "gpt 5.4 mini"]
+  },
+  {
+    id: "gpt-5.4-nano",
+    label: "GPT-5.4 Nano",
+    budget: 400000,
+    source: "built-in",
+    aliases: ["gpt-5.4-nano", "gpt-5.4 nano", "gpt 5.4 nano"]
   },
   {
     id: "gpt-5.2",
@@ -256,8 +303,14 @@ const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
 
 const OPENAI_MODEL_SYNC_URLS = [
   "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
+  "https://developers.openai.com/api/docs/models",
+  "https://developers.openai.com/api/docs/models/compare",
+  "https://developers.openai.com/api/docs/models/gpt-5.5",
+  "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
   "https://platform.openai.com/docs/models",
-  "https://platform.openai.com/docs/models/compare"
+  "https://platform.openai.com/docs/models/compare",
+  "https://openai.com/index/",
+  "https://help.openai.com/en/articles/11909943"
 ];
 
 const CHATGPT_HOSTS = new Set(["chat.openai.com", "chatgpt.com"]);
@@ -788,7 +841,12 @@ function getNativeMessageKey(element: HTMLElement): string | null {
   };
 
   addCandidate(element);
+  addCandidate(element.querySelector<HTMLElement>("[data-message-id]"));
+  addCandidate(element.querySelector<HTMLElement>("[data-turn-id]"));
+  addCandidate(element.querySelector<HTMLElement>('article[data-testid^="conversation-turn"]'));
+  addCandidate(element.querySelector<HTMLElement>('[data-testid^="conversation-turn"]'));
   addCandidate(element.closest<HTMLElement>("[data-message-id]"));
+  addCandidate(element.closest<HTMLElement>("[data-turn-id]"));
   addCandidate(element.closest<HTMLElement>('article[data-testid^="conversation-turn"]'));
   addCandidate(element.closest<HTMLElement>('[data-testid^="conversation-turn"]'));
   addCandidate(element.closest<HTMLElement>("[data-testid]"));
@@ -798,6 +856,11 @@ function getNativeMessageKey(element: HTMLElement): string | null {
     const messageId = candidate.getAttribute("data-message-id")?.trim();
     if (messageId) {
       return `data-message-id:${messageId}`;
+    }
+
+    const turnId = candidate.getAttribute("data-turn-id")?.trim();
+    if (turnId) {
+      return `data-turn-id:${turnId}`;
     }
 
     const testId = candidate.getAttribute("data-testid")?.trim();
@@ -824,10 +887,6 @@ function getNodeSessionAnchorId(element: HTMLElement): string {
   nextNodeAnchorIndex += 1;
   nodeAnchorRegistry.set(element, id);
   return id;
-}
-
-function getLegacyAnchorId(message: ParsedMessage, index: number): string {
-  return `cnav-${stableHash(`${location.pathname}:${index}:${message.role}:${message.text.slice(0, 180)}`)}`;
 }
 
 function getStableAnchorId(message: ParsedMessage): string {
@@ -924,8 +983,7 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       answerTokens += tokenBreakdowns[nextIndex]?.total ?? 0;
     }
 
-    const legacyIds = [getLegacyAnchorId(message, items.length)];
-    const favorite = Boolean(favorites[id] || legacyIds.some((legacyId) => favorites[legacyId]));
+    const favorite = Boolean(favorites[id]);
     const totalTokens = tokenBreakdown.total + answerTokens;
     const heatLevel = getHeatLevel(totalTokens, cumulativeTokens + answerTokens, tokenBudget);
 
@@ -935,7 +993,6 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       answerSummary: summarizeAnswer(answerParts.join("\n\n")),
       turnIndex: items.length + 1,
       favorite,
-      legacyIds,
       promptTokens: tokenBreakdown.total,
       answerTokens,
       totalTokens,
@@ -1106,6 +1163,50 @@ function parseBudgetText(value: string): number | null {
   return Number.isFinite(numeric) && numeric >= 8000 ? Math.round(numeric) : null;
 }
 
+function normalizeModelId(value: string): string | null {
+  const modelMatch = value
+    .replace(/\bGPT\s*[- ]?\s*(\d)/gi, "gpt-$1")
+    .match(/\b(?:gpt|o)[a-z0-9_.-]*(?:[\s_-]+(?:mini|nano|pro|chat|thinking|instant|codex|max|audio|realtime))*\b/i);
+
+  if (!modelMatch?.[0]) {
+    return null;
+  }
+
+  const id = modelMatch[0]
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/--+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return /^(?:gpt|o)[a-z0-9]/.test(id) ? id : null;
+}
+
+function formatModelLabelFromId(id: string): string {
+  return id
+    .replace(/^gpt-/, "GPT-")
+    .replace(/\bmini\b/g, "Mini")
+    .replace(/\bnano\b/g, "Nano")
+    .replace(/\bpro\b/g, "Pro")
+    .replace(/\bchat\b/g, "Chat")
+    .replace(/\bthinking\b/g, "Thinking")
+    .replace(/\binstant\b/g, "Instant")
+    .replace(/\bcodex\b/g, "Codex")
+    .replace(/\bmax\b/g, "Max")
+    .replace(/\baudio\b/g, "Audio")
+    .replace(/\brealtime\b/g, "Realtime");
+}
+
+function makeModelAliases(id: string, label: string, aliases: string[] = []): string[] {
+  return Array.from(new Set([
+    id,
+    id.replace(/-/g, " "),
+    label,
+    label.toLowerCase(),
+    ...aliases
+  ].filter(Boolean)));
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1151,18 +1252,22 @@ function parseOnlineModelCatalog(text: string): ModelBudgetEntry[] {
     const models: ModelBudgetEntry[] = [];
     for (const model of parsed.models) {
       const budget = Number(model.budget);
-      if (!model.id || !model.label || !Number.isFinite(budget) || budget < 8000) {
+      const id = normalizeModelId(String(model.id || model.label || ""));
+      const label = model.label ? String(model.label) : id ? formatModelLabelFromId(id) : "";
+      if (!id || !label || !Number.isFinite(budget) || budget < 8000) {
         continue;
       }
 
+      const aliases = Array.isArray(model.aliases)
+        ? model.aliases.map((alias) => String(alias))
+        : [];
+
       models.push({
-        id: String(model.id),
-        label: String(model.label),
+        id,
+        label,
         budget: Math.round(budget),
         source: "openai",
-        aliases: Array.isArray(model.aliases)
-          ? model.aliases.map((alias) => String(alias))
-          : [String(model.label)]
+        aliases: makeModelAliases(id, label, aliases)
       });
     }
 
@@ -1172,7 +1277,93 @@ function parseOnlineModelCatalog(text: string): ModelBudgetEntry[] {
   }
 }
 
+function cleanModelDocText(text: string): string {
+  return text
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseDynamicModelBudgetsFromDocs(text: string): ModelBudgetEntry[] {
+  const normalized = cleanModelDocText(text);
+  const models = new Map<string, ModelBudgetEntry>();
+  const budgetPattern = "((?:\\d{1,3},)*\\d{3,}|\\d+(?:\\.\\d+)?\\s*[mk])";
+
+  const addModel = (rawName: string, rawBudget: string) => {
+    const id = normalizeModelId(rawName);
+    const budget = parseBudgetText(rawBudget);
+    if (!id || !budget) {
+      return;
+    }
+
+    const existing = models.get(id);
+    const label = existing?.label ?? formatModelLabelFromId(id);
+    models.set(id, {
+      id,
+      label,
+      budget: Math.max(existing?.budget ?? 0, budget),
+      source: "openai",
+      aliases: makeModelAliases(id, label, existing?.aliases)
+    });
+  };
+
+  for (const match of normalized.matchAll(new RegExp(`\\bModel ID\\s+([a-z0-9][a-z0-9_.-]*(?:-[a-z0-9_.-]+)*)[\\s\\S]{0,900}?\\bContext window\\s+${budgetPattern}`, "gi"))) {
+    addModel(match[1], match[2]);
+  }
+
+  for (const match of normalized.matchAll(new RegExp(`\\b((?:GPT|gpt|o)[A-Za-z0-9 ._-]{1,44}?)[\\s\\S]{0,900}?\\bContext window\\s+${budgetPattern}`, "gi"))) {
+    addModel(match[1], match[2]);
+  }
+
+  for (const match of normalized.matchAll(new RegExp(`\\b((?:GPT|gpt|o)[A-Za-z0-9 ._-]{1,44}?)[\\s\\S]{0,700}?${budgetPattern}\\s*(?:tokens?\\s*)?(?:context|context window)\\b`, "gi"))) {
+    addModel(match[1], match[2]);
+  }
+
+  return Array.from(models.values());
+}
+
+function fetchTextFromBackground(url: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof chrome === "undefined" || !chrome.runtime?.id) {
+      reject(new Error("Extension runtime is unavailable"));
+      return;
+    }
+
+    const timer = window.setTimeout(() => reject(new Error("Background fetch timed out")), timeoutMs + 1000);
+    chrome.runtime.sendMessage(
+      {
+        type: "conversationNavigator:fetchText",
+        url,
+        timeoutMs
+      },
+      (response?: { ok?: boolean; text?: string; error?: string }) => {
+        window.clearTimeout(timer);
+        const runtimeError = chrome.runtime.lastError;
+        if (runtimeError?.message) {
+          reject(new Error(runtimeError.message));
+          return;
+        }
+
+        if (response?.ok && typeof response.text === "string") {
+          resolve(response.text);
+          return;
+        }
+
+        reject(new Error(response?.error || "Background fetch failed"));
+      }
+    );
+  });
+}
+
 async function fetchTextWithTimeout(url: string, timeoutMs = 8000): Promise<string> {
+  try {
+    return await fetchTextFromBackground(url, timeoutMs);
+  } catch {
+    // Fall back to page fetch for CORS-enabled endpoints such as raw GitHub.
+  }
+
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
 
@@ -1208,9 +1399,10 @@ async function syncOpenAiModelCatalog(): Promise<ModelBudgetEntry[]> {
     .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled")
     .map((result) => result.value);
   const onlineModels = fetchedText.flatMap(parseOnlineModelCatalog);
+  const dynamicModels = fetchedText.flatMap(parseDynamicModelBudgetsFromDocs);
   const joined = fetchedText.join("\n");
 
-  if (!joined && onlineModels.length === 0) {
+  if (!joined && onlineModels.length === 0 && dynamicModels.length === 0) {
     throw new Error("No OpenAI model docs fetched");
   }
 
@@ -1219,7 +1411,7 @@ async function syncOpenAiModelCatalog(): Promise<ModelBudgetEntry[]> {
     return parsed ? { ...model, budget: parsed, source: "openai" as const } : model;
   });
 
-  return mergeModelCatalog([...synced, ...onlineModels]);
+  return mergeModelCatalog([...synced, ...dynamicModels, ...onlineModels]);
 }
 
 function findModelBudget(modelCatalog: ModelBudgetEntry[], modelId: string): ModelBudgetEntry | undefined {
@@ -1313,75 +1505,8 @@ function createViewportMetrics(entries: MessageMapEntry[]): ViewportMetrics {
   };
 }
 
-function scrollDocumentToRatio(ratio: number, behavior: ScrollBehavior = "smooth") {
-  const viewportHeight = Math.max(1, window.innerHeight);
-  const documentHeight = Math.max(
-    viewportHeight,
-    document.documentElement.scrollHeight,
-    document.body.scrollHeight
-  );
-  const scrollableHeight = Math.max(1, documentHeight - viewportHeight);
-  window.scrollTo({
-    top: Math.min(scrollableHeight, Math.max(0, ratio * scrollableHeight)),
-    behavior
-  });
-}
-
 function toPercent(value: number): string {
   return `${Math.min(100, Math.max(0, value)).toFixed(2)}%`;
-}
-
-function buildMinimapBlocks(
-  entries: MessageMapEntry[],
-  activeId: string | null,
-  visibleIds: Set<string>,
-  query: string
-): MinimapBlock[] {
-  if (entries.length === 0) {
-    return [];
-  }
-
-  const normalizedQuery = query.trim().toLowerCase();
-  const chunkSize = Math.max(1, Math.ceil(entries.length / MINIMAP_MAX_BLOCKS));
-  const blocks: MinimapBlock[] = [];
-
-  for (let index = 0; index < entries.length; index += chunkSize) {
-    const chunk = entries.slice(index, index + chunkSize);
-    const first = chunk[0];
-    const firstElement = anchorRegistry.get(first.id);
-    const documentHeight = Math.max(
-      window.innerHeight,
-      document.documentElement.scrollHeight,
-      document.body.scrollHeight
-    );
-    const firstRect = firstElement?.getBoundingClientRect();
-    const topFromDom = firstRect ? ((firstRect.top + window.scrollY) / documentHeight) * 100 : null;
-    const heightFromDom = firstRect
-      ? Math.min(9, Math.max(0.45, (firstRect.height / documentHeight) * 100))
-      : null;
-    const role = chunk.every((entry) => entry.role === first.role) ? first.role : "mixed";
-    const top = topFromDom ?? (index / entries.length) * 100;
-    const height = heightFromDom ?? Math.max(0.8, (chunk.length / entries.length) * 100);
-    const heatLevel = Math.max(...chunk.map((entry) => entry.heatLevel)) as HeatLevel;
-    const queryMatch =
-      Boolean(normalizedQuery) &&
-      chunk.some((entry) => entry.text.toLowerCase().includes(normalizedQuery));
-
-    blocks.push({
-      id: first.id,
-      role,
-      top,
-      height,
-      heatLevel,
-      tokenCount: chunk.reduce((sum, entry) => sum + entry.tokenCount, 0),
-      active: chunk.some((entry) => entry.id === activeId),
-      visible: chunk.some((entry) => visibleIds.has(entry.id)),
-      favorite: chunk.some((entry) => entry.favorite),
-      queryMatch
-    });
-  }
-
-  return blocks;
 }
 
 function ConversationNavigator() {
@@ -1407,6 +1532,7 @@ function ConversationNavigator() {
     topRatio: 0,
     heightRatio: 0
   });
+  const [tokenHudDraft, setTokenHudDraft] = useState<{ x: number; y: number } | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
   const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
   const [modelSyncStatus, setModelSyncStatus] = useState<ModelSyncStatus>("idle");
@@ -1834,10 +1960,6 @@ function ConversationNavigator() {
     [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
   );
   const tokenBudgetPercent = tokenStats.budget > 0 ? (tokenStats.total / tokenStats.budget) * 100 : 0;
-  const minimapBlocks = useMemo(
-    () => buildMinimapBlocks(mapEntries, activeId, viewportMetrics.visibleIds, query),
-    [activeId, mapEntries, query, viewportMetrics.visibleIds]
-  );
   const syncStatusLabel =
     modelSyncStatus === "syncing"
       ? t.tokenModelSyncing
@@ -1846,6 +1968,11 @@ function ConversationNavigator() {
         : modelSyncStatus === "failed"
           ? t.tokenModelSyncFailed
           : t.tokenModelSync;
+  const hudPosition =
+    tokenHudDraft ??
+    (settings.tokenHudX > 0 || settings.tokenHudY > 0
+      ? { x: settings.tokenHudX, y: settings.tokenHudY }
+      : null);
 
   const cacheLabel =
     settings.cacheMode === "chrome"
@@ -1913,28 +2040,45 @@ function ConversationNavigator() {
       document.addEventListener("pointercancel", handleUp, true);
     };
 
-  const jumpFromMinimapPointer = (event: React.PointerEvent<HTMLElement>) => {
+  const startTokenHudDrag = (event: React.PointerEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button, input, select")) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
 
-    const track = event.currentTarget;
-    const pointerId = event.pointerId;
-    track.setPointerCapture(pointerId);
+    const shell = event.currentTarget.closest<HTMLElement>(".cnav-token-hud");
+    const rect = shell?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
 
-    const jump = (clientY: number, behavior: ScrollBehavior) => {
-      const rect = track.getBoundingClientRect();
-      const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
-      scrollDocumentToRatio(ratio, behavior);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startLeft = rect.left;
+    const startTop = rect.top;
+    let latestPosition = { x: Math.round(startLeft), y: Math.round(startTop) };
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const nextX = Math.round(
+        Math.min(window.innerWidth - DEFAULT_HUD_WIDTH - 8, Math.max(8, startLeft + moveEvent.clientX - startX))
+      );
+      const nextY = Math.round(Math.min(window.innerHeight - 96, Math.max(8, startTop + moveEvent.clientY - startY)));
+      latestPosition = { x: nextX, y: nextY };
+      setTokenHudDraft(latestPosition);
     };
 
-    jump(event.clientY, "smooth");
-
-    const handleMove = (moveEvent: PointerEvent) => jump(moveEvent.clientY, "auto");
     const handleUp = () => {
-      track.releasePointerCapture(pointerId);
       document.removeEventListener("pointermove", handleMove, true);
       document.removeEventListener("pointerup", handleUp, true);
       document.removeEventListener("pointercancel", handleUp, true);
+      updateSettings({
+        tokenHudX: latestPosition.x,
+        tokenHudY: latestPosition.y
+      });
+      setTokenHudDraft(null);
     };
 
     document.addEventListener("pointermove", handleMove, true);
@@ -1965,15 +2109,12 @@ function ConversationNavigator() {
   };
 
   const toggleFavorite = async (item: NavigatorItem) => {
-    const nextFavorites = { ...favorites };
-    const itemFavorite = Boolean(
-      nextFavorites[item.id] || item.legacyIds?.some((legacyId) => nextFavorites[legacyId])
-    );
+  const nextFavorites = { ...favorites };
+  const itemFavorite = Boolean(nextFavorites[item.id]);
 
-    if (itemFavorite) {
-      delete nextFavorites[item.id];
-      item.legacyIds?.forEach((legacyId) => delete nextFavorites[legacyId]);
-    } else {
+  if (itemFavorite) {
+    delete nextFavorites[item.id];
+  } else {
       nextFavorites[item.id] = true;
     }
 
@@ -1992,116 +2133,97 @@ function ConversationNavigator() {
     await persistRecord(settings, pageKey, nextItems, nextFavorites);
   };
 
-  const renderTokenPanel = () => {
+  const renderTokenPanel = (variant: "hud" | "dock") => {
     if (!settings.tokenPanelEnabled) {
       return null;
     }
 
+    const collapsed = variant === "hud" && settings.tokenPanelCollapsed;
     const userPercent = tokenStats.total > 0 ? (tokenStats.user / tokenStats.total) * 100 : 0;
     const assistantPercent = tokenStats.total > 0 ? (tokenStats.assistant / tokenStats.total) * 100 : 0;
     const codePercent = tokenStats.total > 0 ? (tokenStats.code / tokenStats.total) * 100 : 0;
     const tablePercent = tokenStats.total > 0 ? (tokenStats.table / tokenStats.total) * 100 : 0;
-
-    return (
-      <section
-        className="cnav-token-panel cnav-token-dock"
-        data-theme={theme}
-        aria-label={t.tokenPanel}
-      >
-        <div className="cnav-token-head">
-          <BarChart3 size={14} aria-hidden="true" />
-          <span>{t.tokenPanelShort}</span>
-          <small>{t.tokenPanelEstimated}</small>
-        </div>
-
-        <div className="cnav-token-body">
-          <div className="cnav-token-total">
-            <strong>{formatTokenCount(tokenStats.total)}</strong>
-            <span>{t.tokenTotal}</span>
-            <small>{tokenStats.modelLabel || t.tokenModelUnknown}</small>
-          </div>
-          <div className="cnav-token-grid">
-            <span>{t.tokenViewport}</span>
-            <strong>{formatTokenCount(tokenStats.viewport)}</strong>
-            <span>{t.tokenBudget}</span>
-            <strong>{`${Math.round(tokenBudgetPercent)}%`}</strong>
-          </div>
-          <div className="cnav-token-progress" aria-hidden="true">
-            <span style={{ width: toPercent(tokenBudgetPercent) }} />
-          </div>
-          <div className="cnav-token-breakdown" aria-label={t.estimatedOnly}>
-            <span style={{ ["--share" as string]: toPercent(userPercent) }}>{t.tokenUserShare}</span>
-            <span style={{ ["--share" as string]: toPercent(assistantPercent) }}>{t.tokenAssistantShare}</span>
-            <span style={{ ["--share" as string]: toPercent(codePercent) }}>{t.tokenCodeShare}</span>
-            <span style={{ ["--share" as string]: toPercent(tablePercent) }}>{t.tokenTableShare}</span>
-          </div>
-          <div className="cnav-token-note">
-            <span>{tokenStats.budgetLabel}</span>
-            <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
-          </div>
-        </div>
-      </section>
-    );
-  };
-
-  const renderMinimap = (mode: "page-edge" | "dock") => {
-    if (!settings.minimapEnabled || minimapBlocks.length === 0) {
-      return null;
-    }
-
-    const edgeStyle =
-      mode === "page-edge"
-        ? {
-            right: settings.collapsed ? EDGE_MINIMAP_RIGHT_GAP : 362,
-            top: resizeFrame?.top ?? 112,
-            height: resizeFrame?.height ?? Math.max(260, window.innerHeight - 224)
-          }
+    const hudStyle =
+      variant === "hud"
+        ? hudPosition
+          ? { left: hudPosition.x, top: hudPosition.y }
+          : { right: DEFAULT_HUD_WIDTH + DEFAULT_HUD_GAP + 88, top: 118 }
         : undefined;
 
     return (
-      <aside
-        className={`cnav-minimap cnav-minimap-${mode}`}
+      <section
+        className={`cnav-token-panel cnav-token-${variant}${collapsed ? " is-collapsed" : ""}`}
         data-theme={theme}
-        style={edgeStyle}
-        aria-label={t.minimap}
-        title={t.minimapJump}
+        style={hudStyle}
+        aria-label={t.tokenPanel}
       >
-        <div className="cnav-minimap-track" onPointerDown={jumpFromMinimapPointer}>
-          <span
-            className="cnav-minimap-viewport"
-            style={{
-              top: toPercent(viewportMetrics.topRatio * 100),
-              height: toPercent(viewportMetrics.heightRatio * 100)
-            }}
-          />
-          {minimapBlocks.map((block) => (
+        <div
+          className="cnav-token-head"
+          onPointerDown={variant === "hud" ? startTokenHudDrag : undefined}
+          onDoubleClick={variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : undefined}
+        >
+          {variant === "hud" ? <GripVertical size={14} aria-hidden="true" /> : <BarChart3 size={14} aria-hidden="true" />}
+          <span>{t.tokenPanelShort}</span>
+          <small>
+            {collapsed
+              ? `${formatTokenCount(tokenStats.total)} · ${Math.round(tokenBudgetPercent)}%`
+              : t.tokenPanelEstimated}
+          </small>
+          <button
+            type="button"
+            className="cnav-token-mini-button"
+            title={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
+            aria-label={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
+            onClick={() =>
+              updateSettings({
+                tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
+              })
+            }
+          >
+            <ChevronsUpDown size={13} aria-hidden="true" />
+          </button>
+          {variant === "hud" ? (
             <button
-              key={`${block.id}:${block.top}`}
               type="button"
-              className={[
-                "cnav-minimap-block",
-                `is-${block.role}`,
-                block.active ? "is-active" : "",
-                block.visible ? "is-visible" : "",
-                block.favorite ? "is-favorite" : "",
-                block.queryMatch ? "is-query" : "",
-                block.heatLevel > 0 ? `is-heat-${block.heatLevel}` : ""
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              style={{
-                top: toPercent(block.top),
-                height: toPercent(block.height)
-              }}
-              aria-label={`${t.minimap} ${formatTokenCount(block.tokenCount)}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                scrollToNavigatorItem(block.id);
-              }}
-            />
-          ))}
+              className="cnav-token-mini-button"
+              title={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
+              aria-label={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
+              onClick={() => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed })}
+            >
+              <Minimize2 size={13} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
-      </aside>
+
+        {collapsed ? null : (
+          <div className="cnav-token-body">
+            <div className="cnav-token-total">
+              <strong>{formatTokenCount(tokenStats.total)}</strong>
+              <span>{t.tokenTotal}</span>
+              <small>{tokenStats.modelLabel || t.tokenModelUnknown}</small>
+            </div>
+            <div className="cnav-token-grid">
+              <span>{t.tokenViewport}</span>
+              <strong>{formatTokenCount(tokenStats.viewport)}</strong>
+              <span>{t.tokenBudget}</span>
+              <strong>{`${Math.round(tokenBudgetPercent)}%`}</strong>
+            </div>
+            <div className="cnav-token-progress" aria-hidden="true">
+              <span style={{ width: toPercent(tokenBudgetPercent) }} />
+            </div>
+            <div className="cnav-token-breakdown" aria-label={t.estimatedOnly}>
+              <span style={{ ["--share" as string]: toPercent(userPercent) }}>{t.tokenUserShare}</span>
+              <span style={{ ["--share" as string]: toPercent(assistantPercent) }}>{t.tokenAssistantShare}</span>
+              <span style={{ ["--share" as string]: toPercent(codePercent) }}>{t.tokenCodeShare}</span>
+              <span style={{ ["--share" as string]: toPercent(tablePercent) }}>{t.tokenTableShare}</span>
+            </div>
+            <div className="cnav-token-note">
+              <span>{tokenStats.budgetLabel}</span>
+              <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
+            </div>
+          </div>
+        )}
+      </section>
     );
   };
 
@@ -2136,7 +2258,7 @@ function ConversationNavigator() {
         </>
       ) : null}
 
-      {settings.minimapMode === "page-edge" ? renderMinimap("page-edge") : null}
+      {settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null}
 
       <aside
         className={`cnav-shell${settings.collapsed ? " is-collapsed" : ""}${isOpening ? " is-opening" : ""}`}
@@ -2277,6 +2399,18 @@ function ConversationNavigator() {
                 />
               </label>
               <label className="cnav-display-field cnav-select-field">
+                <span>{t.tokenPanel}</span>
+                <select
+                  value={settings.tokenPanelMode}
+                  onChange={(event) =>
+                    updateSettings({ tokenPanelMode: event.currentTarget.value === "dock" ? "dock" : "floating" })
+                  }
+                >
+                  <option value="floating">{t.tokenPanelFloating}</option>
+                  <option value="dock">{t.tokenPanelDock}</option>
+                </select>
+              </label>
+              <label className="cnav-display-field cnav-select-field">
                 <span>{t.tokenBudget}</span>
                 <select
                   value={
@@ -2342,30 +2476,10 @@ function ConversationNavigator() {
                   />
                 </label>
               ) : null}
-              <label className="cnav-toggle-field">
-                <span>{t.minimap}</span>
-                <input
-                  type="checkbox"
-                  checked={settings.minimapEnabled}
-                  onChange={(event) => updateSettings({ minimapEnabled: event.currentTarget.checked })}
-                />
-              </label>
-              <label className="cnav-display-field cnav-select-field">
-                <span>{t.minimap}</span>
-                <select
-                  value={settings.minimapMode}
-                  onChange={(event) =>
-                    updateSettings({ minimapMode: event.currentTarget.value === "dock" ? "dock" : "page-edge" })
-                  }
-                >
-                  <option value="page-edge">{t.minimapPageEdge}</option>
-                  <option value="dock">{t.minimapDock}</option>
-                </select>
-              </label>
             </div>
           ) : null}
 
-          {renderTokenPanel()}
+          {settings.tokenPanelMode === "dock" ? renderTokenPanel("dock") : null}
 
           <div className="cnav-controls">
             <label className="cnav-search">
@@ -2397,7 +2511,7 @@ function ConversationNavigator() {
             </button>
           </div>
 
-          <div className={`cnav-list-wrap${settings.minimapMode === "dock" ? " has-minimap" : ""}`}>
+          <div className="cnav-list-wrap">
             <div className="cnav-list" role="list" ref={listRef}>
               {filteredItems.length === 0 ? (
                 <div className="cnav-empty">
@@ -2438,7 +2552,6 @@ function ConversationNavigator() {
                 ))
               )}
             </div>
-            {settings.minimapMode === "dock" ? renderMinimap("dock") : null}
           </div>
 
           <footer className="cnav-footer">

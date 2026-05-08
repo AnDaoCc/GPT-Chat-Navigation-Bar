@@ -4,8 +4,8 @@ export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
 
 export type CacheMode = "chrome" | "page" | "off";
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
+export type TokenPanelMode = "floating" | "dock";
 export type TokenBudgetMode = "model" | "manual";
-export type MinimapMode = "page-edge" | "dock";
 
 export interface StoredNavigatorNode {
   id: string;
@@ -42,11 +42,13 @@ export interface NavigatorSettings {
   chatContentWidth: number;
   autoCollapseOnOutsideClick: boolean;
   tokenPanelEnabled: boolean;
+  tokenPanelMode: TokenPanelMode;
+  tokenPanelCollapsed: boolean;
   tokenBudgetMode: TokenBudgetMode;
   tokenModelId: string;
   manualTokenBudget: number;
-  minimapEnabled: boolean;
-  minimapMode: MinimapMode;
+  tokenHudX: number;
+  tokenHudY: number;
 }
 
 export const DEFAULT_SETTINGS: NavigatorSettings = {
@@ -60,11 +62,13 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   chatContentWidth: 60,
   autoCollapseOnOutsideClick: false,
   tokenPanelEnabled: true,
+  tokenPanelMode: "floating",
+  tokenPanelCollapsed: false,
   tokenBudgetMode: "model",
   tokenModelId: "chatgpt-auto",
   manualTokenBudget: 128000,
-  minimapEnabled: true,
-  minimapMode: "page-edge"
+  tokenHudX: 0,
+  tokenHudY: 0
 };
 
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -91,8 +95,8 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
   const language: AppLanguage =
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
+  const tokenPanelMode: TokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
   const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
-  const minimapMode: MinimapMode = value?.minimapMode === "dock" ? "dock" : "page-edge";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
   return {
@@ -106,13 +110,15 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
     autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
     tokenPanelEnabled: value?.tokenPanelEnabled !== false,
+    tokenPanelMode,
+    tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
     tokenBudgetMode,
     tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim()
       ? value.tokenModelId.trim().slice(0, 80)
       : "chatgpt-auto",
     manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 2000000, 128000)),
-    minimapEnabled: value?.minimapEnabled !== false,
-    minimapMode
+    tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
+    tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0))
   };
 }
 
