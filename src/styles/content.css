@@ -259,9 +259,39 @@
   display: flex;
   flex-direction: column;
   gap: 9px;
+  max-height: min(58vh, 480px);
   padding: 9px 10px;
   border-bottom: 1px solid var(--cnav-border);
   background: color-mix(in srgb, var(--cnav-surface) 72%, transparent);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#conversation-navigator-root .cnav-display-panel::-webkit-scrollbar {
+  width: 9px;
+}
+
+#conversation-navigator-root .cnav-display-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#conversation-navigator-root .cnav-display-panel::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cnav-muted) 42%, transparent);
+  background-clip: content-box;
+}
+
+#conversation-navigator-root .cnav-display-section-title {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  color: var(--cnav-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 #conversation-navigator-root .cnav-display-field {

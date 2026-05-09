@@ -7719,6 +7719,10 @@
     language: "zh-CN",
     chatFontScale: 100,
     chatLetterSpacing: 0,
+    chatLineHeight: 155,
+    canvasFontScale: 100,
+    canvasLetterSpacing: 0,
+    canvasLineHeight: 155,
     chatLayoutVersion: 2,
     chatContentWidth: 60,
     autoCollapseOnOutsideClick: false,
@@ -7754,7 +7758,11 @@
       cacheNamespace: sanitizeCacheNamespace(value?.cacheNamespace),
       language,
       chatFontScale: clampNumber(value?.chatFontScale, 85, 220, 100),
-      chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 1.2, 0),
+      chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 8, 0),
+      chatLineHeight: clampNumber(value?.chatLineHeight, 125, 220, 155),
+      canvasFontScale: clampNumber(value?.canvasFontScale, 75, 220, 100),
+      canvasLetterSpacing: clampNumber(value?.canvasLetterSpacing, 0, 8, 0),
+      canvasLineHeight: clampNumber(value?.canvasLineHeight, 120, 230, 155),
       chatLayoutVersion: 2,
       chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : void 0, 60, 100, 60),
       autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
@@ -7790,9 +7798,12 @@
       showFavoritesOnly: "\u53EA\u663E\u793A\u6536\u85CF",
       refresh: "\u5237\u65B0",
       displaySettings: "\u663E\u793A\u8BBE\u7F6E",
+      chatDisplay: "\u804A\u5929\u6B63\u6587",
+      canvasDisplay: "\u753B\u5E03\u6587\u5B57",
       language: "\u754C\u9762\u8BED\u8A00",
       fontSize: "\u5B57\u53F7",
-      letterSpacing: "\u5B57\u8DDD",
+      letterSpacing: "\u5DE6\u53F3\u5B57\u8DDD",
+      lineSpacing: "\u4E0A\u4E0B\u884C\u8DDD",
       contentWidth: "\u6B63\u6587\u5BBD\u5EA6",
       officialWidthReset: "\u6062\u590D\u5B98\u65B9\u9ED1\u8FB9",
       autoCollapse: "\u70B9\u51FB\u5916\u90E8\u81EA\u52A8\u6536\u8D77",
@@ -7809,7 +7820,7 @@
       popupSubtitle: "\u4EC5\u4F5C\u7528\u4E8E ChatGPT \u9875\u9762\u7684\u672C\u5730\u5BFC\u822A\u5DE5\u5177\u3002",
       pages: "\u9875\u9762",
       nodes: "\u8282\u70B9",
-      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u672C\u6269\u5C55\u53EA\u5728 ChatGPT \u57DF\u540D\u8FD0\u884C\uFF0C\u4E0D\u8C03\u7528 ChatGPT\u3001OpenAI API \u6216\u7B2C\u4E09\u65B9\u670D\u52A1\u3002",
+      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u6A21\u578B\u76EE\u5F55\u540C\u6B65\u4F1A\u8BBF\u95EE OpenAI \u5B98\u7F51\u6587\u6863\u548C\u9879\u76EE\u6A21\u578B\u6E05\u5355\uFF0C\u4F46\u4E0D\u4F1A\u4E0A\u4F20\u6216\u4F20\u8F93\u804A\u5929\u5185\u5BB9\u3002",
       cacheLocation: "\u7F13\u5B58\u4F4D\u7F6E",
       saving: "\u4FDD\u5B58\u4E2D",
       storageTarget: "\u5B58\u50A8\u76EE\u6807",
@@ -7862,9 +7873,12 @@
       showFavoritesOnly: "\u53EA\u986F\u793A\u6536\u85CF",
       refresh: "\u91CD\u65B0\u6574\u7406",
       displaySettings: "\u986F\u793A\u8A2D\u5B9A",
+      chatDisplay: "\u804A\u5929\u6B63\u6587",
+      canvasDisplay: "\u756B\u5E03\u6587\u5B57",
       language: "\u4ECB\u9762\u8A9E\u8A00",
       fontSize: "\u5B57\u865F",
-      letterSpacing: "\u5B57\u8DDD",
+      letterSpacing: "\u5DE6\u53F3\u5B57\u8DDD",
+      lineSpacing: "\u4E0A\u4E0B\u884C\u8DDD",
       contentWidth: "\u6B63\u6587\u5BEC\u5EA6",
       officialWidthReset: "\u6062\u5FA9\u5B98\u65B9\u9ED1\u908A",
       autoCollapse: "\u9EDE\u64CA\u5916\u90E8\u81EA\u52D5\u6536\u5408",
@@ -7881,7 +7895,7 @@
       popupSubtitle: "\u53EA\u4F5C\u7528\u65BC ChatGPT \u9801\u9762\u7684\u672C\u6A5F\u5C0E\u89BD\u5DE5\u5177\u3002",
       pages: "\u9801\u9762",
       nodes: "\u7BC0\u9EDE",
-      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u672C\u64F4\u5145\u529F\u80FD\u53EA\u5728 ChatGPT \u7DB2\u57DF\u57F7\u884C\uFF0C\u4E0D\u547C\u53EB ChatGPT\u3001OpenAI API \u6216\u7B2C\u4E09\u65B9\u670D\u52D9\u3002",
+      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u6A21\u578B\u76EE\u9304\u540C\u6B65\u6703\u5B58\u53D6 OpenAI \u5B98\u65B9\u6587\u4EF6\u548C\u5C08\u6848\u6A21\u578B\u6E05\u55AE\uFF0C\u4F46\u4E0D\u6703\u4E0A\u50B3\u6216\u50B3\u8F38\u804A\u5929\u5167\u5BB9\u3002",
       cacheLocation: "\u5FEB\u53D6\u4F4D\u7F6E",
       saving: "\u5132\u5B58\u4E2D",
       storageTarget: "\u5132\u5B58\u76EE\u6A19",
@@ -7934,9 +7948,12 @@
       showFavoritesOnly: "Show favorites only",
       refresh: "Refresh",
       displaySettings: "Display",
+      chatDisplay: "Chat text",
+      canvasDisplay: "Canvas text",
       language: "Language",
       fontSize: "Font size",
-      letterSpacing: "Spacing",
+      letterSpacing: "Horizontal spacing",
+      lineSpacing: "Line spacing",
       contentWidth: "Content width",
       officialWidthReset: "Official width",
       autoCollapse: "Collapse on outside click",
@@ -7953,7 +7970,7 @@
       popupSubtitle: "Local navigator for ChatGPT pages only.",
       pages: "Pages",
       nodes: "Nodes",
-      privacy: "Data stays local. This extension only runs on ChatGPT domains and does not call ChatGPT, OpenAI APIs, or third-party services.",
+      privacy: "Data stays local. Model catalog sync may fetch OpenAI documentation and the project model catalog, but chat content is not uploaded or transmitted.",
       cacheLocation: "Cache location",
       saving: "Saving",
       storageTarget: "Storage target",
@@ -8005,13 +8022,20 @@
   var ROOT_ID = "conversation-navigator-root";
   var ANCHOR_ATTR = "data-conversation-navigator-id";
   var MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
-  var SCAN_DEBOUNCE_MS = 350;
+  var SCAN_DEBOUNCE_MS = 650;
+  var STREAMING_SCAN_DEBOUNCE_MS = 1400;
+  var IDLE_SCAN_TIMEOUT_MS = 1200;
   var CHAT_STYLE_ID = "conversation-navigator-chat-style";
   var OFFICIAL_THREAD_WIDTH = 60;
   var THREAD_WIDTH_MIN = 60;
   var THREAD_WIDTH_MAX = 100;
   var DEFAULT_TOKEN_BUDGET = 128e3;
   var TOKEN_CACHE_LIMIT = 900;
+  var TOKENIZER_TEXT_LIMIT = 12e3;
+  var TOKEN_BREAKDOWN_NODE_LIMIT = 80;
+  var SUPPLEMENTAL_CONTEXT_LIMIT = 8;
+  var SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
+  var SUPPLEMENTAL_TEXT_LIMIT = 6e4;
   var MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1e3;
   var DEFAULT_HUD_WIDTH = 246;
   var DEFAULT_HUD_GAP = 26;
@@ -8040,6 +8064,44 @@
     '[data-testid*="toolbar" i]',
     '[class*="copy" i]',
     '[class*="toolbar" i]'
+  ].join(",");
+  var SUPPLEMENTAL_CONTEXT_SELECTOR = [
+    '[data-testid*="canvas" i]',
+    '[data-testid*="artifact" i]',
+    '[data-testid*="document" i]',
+    '[data-testid*="attachment" i]',
+    '[data-testid*="file" i]',
+    '[aria-label*="canvas" i]',
+    '[aria-label*="artifact" i]',
+    '[aria-label*="document" i]',
+    '[aria-label*="attachment" i]',
+    '[aria-label*="file" i]',
+    '[aria-label*="\u753B\u5E03" i]',
+    '[aria-label*="\u6587\u6863" i]',
+    '[aria-label*="\u9644\u4EF6" i]',
+    '[aria-label*="\u6587\u4EF6" i]',
+    '[class*="canvas" i]',
+    '[class*="artifact" i]',
+    '[class*="document" i]',
+    '[class*="attachment" i]',
+    '[class*="textLayer" i]',
+    ".ProseMirror",
+    ".cm-content",
+    ".monaco-editor",
+    '[contenteditable="true"]',
+    "[data-page-number]"
+  ].join(",");
+  var SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR = [
+    `#${ROOT_ID}`,
+    'article[data-testid^="conversation-turn"]',
+    '[data-testid^="conversation-turn"]',
+    "[data-message-author-role]",
+    '[data-testid*="composer" i]',
+    '[aria-label*="composer" i]',
+    '[aria-label*="\u8F93\u5165" i]',
+    '[aria-label*="\u767C\u9001\u8A0A\u606F" i]',
+    '[aria-label*="\u53D1\u9001\u6D88\u606F" i]',
+    "form"
   ].join(",");
   var anchorRegistry = /* @__PURE__ */ new Map();
   var nodeAnchorRegistry = /* @__PURE__ */ new WeakMap();
@@ -8219,8 +8281,21 @@
     const fontSize = `${(settings.chatFontScale / 100).toFixed(2)}rem`;
     const codeSize = `${Math.max(0.85, settings.chatFontScale / 100 * 0.94).toFixed(2)}rem`;
     const letterSpacing = `${settings.chatLetterSpacing.toFixed(2)}px`;
+    const lineHeight = `${(settings.chatLineHeight / 100).toFixed(2)}`;
+    const codeLineHeight = `${Math.max(1.38, settings.chatLineHeight / 100 * 0.94).toFixed(2)}`;
+    const paragraphGap = `${Math.max(0.34, (settings.chatLineHeight - 125) * 6e-3 + 0.26).toFixed(2)}em`;
+    const canvasFontSize = `${(settings.canvasFontScale / 100).toFixed(2)}rem`;
+    const canvasCodeSize = `${Math.max(0.82, settings.canvasFontScale / 100 * 0.94).toFixed(2)}rem`;
+    const canvasLetterSpacing = `${settings.canvasLetterSpacing.toFixed(2)}px`;
+    const canvasLineHeight = `${(settings.canvasLineHeight / 100).toFixed(2)}`;
+    const canvasCodeLineHeight = `${Math.max(1.34, settings.canvasLineHeight / 100 * 0.94).toFixed(2)}`;
+    const canvasParagraphGap = `${Math.max(0.28, (settings.canvasLineHeight - 120) * 5e-3 + 0.22).toFixed(2)}em`;
     const contentWidth = `${getThreadWidthRem(settings.chatContentWidth).toFixed(2)}rem`;
     const threadWidth = `min(${contentWidth}, calc(100vw - 24px))`;
+    const canvasTextSelector = [
+      `body :is([data-testid*="canvas" i], [data-testid*="artifact" i], [aria-label*="canvas" i], [aria-label*="\u753B\u5E03" i], [class*="canvas" i], [class*="artifact" i], [class*="textLayer" i], .ProseMirror, .cm-content, .monaco-editor):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`,
+      `body :is([data-testid*="document" i], [aria-label*="document" i], [aria-label*="\u6587\u6863" i]):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`
+    ].join(",\n    ");
     const layoutWidthRules = settings.chatContentWidth > OFFICIAL_THREAD_WIDTH ? `
     main {
       --cnav-thread-width: ${threadWidth};
@@ -8276,33 +8351,81 @@
     style.textContent = `
     ${layoutWidthRules}
 
-    main [data-message-author-role="assistant"] :is(.markdown, .whitespace-pre-wrap),
-    main [data-message-author-role="assistant"] .markdown,
-    main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words, p) {
+    main [data-message-author-role] {
       font-size: ${fontSize} !important;
       letter-spacing: ${letterSpacing} !important;
+      line-height: ${lineHeight} !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
     }
 
-    main [data-message-author-role="assistant"] :where(.markdown p, .markdown li, .markdown span, .markdown strong, .markdown em, .whitespace-pre-wrap, p, li),
-    main [data-message-author-role="user"] :where(.whitespace-pre-wrap, .break-words, p, span) {
+    main [data-message-author-role] :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
       font-size: inherit !important;
       letter-spacing: ${letterSpacing} !important;
+      line-height: ${lineHeight} !important;
     }
 
-    main [data-message-author-role="assistant"] :where(.markdown code, .markdown pre, code, pre) {
+    main [data-message-author-role] :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
+      margin-top: ${paragraphGap} !important;
+      margin-bottom: ${paragraphGap} !important;
+    }
+
+    main [data-message-author-role] :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
+      margin-top: 0 !important;
+    }
+
+    main [data-message-author-role] :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
+      margin-bottom: 0 !important;
+    }
+
+    main [data-message-author-role] :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
       font-size: ${codeSize} !important;
-      letter-spacing: ${Math.min(settings.chatLetterSpacing, 0.6).toFixed(2)}px !important;
+      letter-spacing: ${Math.min(settings.chatLetterSpacing, 2).toFixed(2)}px !important;
+      line-height: ${codeLineHeight} !important;
     }
 
     main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words) {
       max-width: min(760px, 72vw) !important;
       overflow-wrap: anywhere !important;
-      word-break: break-word !important;
+      word-break: normal !important;
     }
 
     main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
       max-height: 46vh;
       overflow-y: auto;
+    }
+
+    ${canvasTextSelector} {
+      font-size: ${canvasFontSize} !important;
+      letter-spacing: ${canvasLetterSpacing} !important;
+      line-height: ${canvasLineHeight} !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
+    }
+
+    ${canvasTextSelector} :where(.ProseMirror, .cm-line, .view-line, .view-line span, .markdown, .prose, p, li, span, strong, em, blockquote) {
+      font-size: inherit !important;
+      letter-spacing: ${canvasLetterSpacing} !important;
+      line-height: ${canvasLineHeight} !important;
+    }
+
+    ${canvasTextSelector} :where(p, li) {
+      margin-top: ${canvasParagraphGap} !important;
+      margin-bottom: ${canvasParagraphGap} !important;
+    }
+
+    ${canvasTextSelector} :where(p:first-child, li:first-child) {
+      margin-top: 0 !important;
+    }
+
+    ${canvasTextSelector} :where(p:last-child, li:last-child) {
+      margin-bottom: 0 !important;
+    }
+
+    ${canvasTextSelector} :where(code, pre, .cm-line, .view-line, .view-line span) {
+      font-size: ${canvasCodeSize} !important;
+      letter-spacing: ${Math.min(settings.canvasLetterSpacing, 2).toFixed(2)}px !important;
+      line-height: ${canvasCodeLineHeight} !important;
     }
   `;
   }
@@ -8313,11 +8436,36 @@
       return [];
     }
   }
+  function requestIdleWork(callback, timeout = IDLE_SCAN_TIMEOUT_MS) {
+    const win = window;
+    if (typeof win.requestIdleCallback === "function") {
+      return {
+        id: win.requestIdleCallback(() => callback(), { timeout }),
+        type: "idle"
+      };
+    }
+    return {
+      id: window.setTimeout(callback, 0),
+      type: "timer"
+    };
+  }
+  function cancelIdleWork(work) {
+    if (!work) {
+      return;
+    }
+    const win = window;
+    if (work.type === "idle" && typeof win.cancelIdleCallback === "function") {
+      win.cancelIdleCallback(work.id);
+      return;
+    }
+    window.clearTimeout(work.id);
+  }
   function normalizeText(value) {
     return value.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").replace(/^(You said:|ChatGPT said:|User:|Assistant:|Model:)\s*/i, "").trim();
   }
-  function extractVisibleText(element) {
+  function extractVisibleText(element, maxCharacters = Number.POSITIVE_INFINITY) {
     const parts = [];
+    let length = 0;
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
@@ -8343,7 +8491,13 @@
     while (walker.nextNode()) {
       const text = walker.currentNode.nodeValue;
       if (text) {
-        parts.push(text);
+        const available = maxCharacters - length;
+        if (available <= 0) {
+          break;
+        }
+        const nextText = text.length > available ? text.slice(0, available) : text;
+        parts.push(nextText);
+        length += nextText.length;
       }
     }
     return normalizeText(parts.join(" "));
@@ -8452,6 +8606,92 @@
     }
     return (hash >>> 0).toString(36);
   }
+  function isSupplementalContextCandidate(element) {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName === "html" || tagName === "body" || tagName === "main") {
+      return false;
+    }
+    if (!isVisibleElement(element) || element.closest(SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR)) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 12) {
+      return false;
+    }
+    return true;
+  }
+  function sortSupplementalContexts(contexts) {
+    return [...contexts].sort((a, b) => {
+      if (a.element === b.element) {
+        return 0;
+      }
+      const position = a.element.compareDocumentPosition(b.element);
+      return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+    });
+  }
+  function compactSupplementalContexts(contexts) {
+    const compacted = [];
+    const seenText = /* @__PURE__ */ new Set();
+    for (const context of sortSupplementalContexts(contexts).map((context2) => ({
+      ...context2,
+      text: normalizeText(context2.text)
+    }))) {
+      if (!context.text || context.text.length < 4 || !document.body.contains(context.element)) {
+        continue;
+      }
+      const textKey = stableHash(`${context.kind}:${context.text}`);
+      if (seenText.has(textKey)) {
+        continue;
+      }
+      let shouldAdd = true;
+      for (let index = 0; index < compacted.length; index += 1) {
+        const existing = compacted[index];
+        const nested = existing.element.contains(context.element) || context.element.contains(existing.element);
+        const overlappingText = existing.text === context.text || existing.text.includes(context.text) || context.text.includes(existing.text);
+        if (!nested && !overlappingText) {
+          continue;
+        }
+        if (context.text.length > existing.text.length && context.element.contains(existing.element)) {
+          compacted[index] = context;
+        }
+        shouldAdd = false;
+        break;
+      }
+      if (shouldAdd) {
+        compacted.push(context);
+        seenText.add(textKey);
+      }
+    }
+    return compacted;
+  }
+  function inferSupplementalContextKind(element) {
+    const descriptor = [
+      element.id,
+      element.className,
+      element.getAttribute("aria-label"),
+      element.getAttribute("data-testid"),
+      element.getAttribute("data-test-id")
+    ].filter(Boolean).join(" ").toLowerCase();
+    return /(canvas|artifact|画布|prosemirror|cm-content|monaco)/i.test(descriptor) ? "canvas" : "file";
+  }
+  function collectSupplementalContexts() {
+    const contexts = [];
+    for (const element of safeQueryAll(SUPPLEMENTAL_CONTEXT_SELECTOR).slice(0, SUPPLEMENTAL_CANDIDATE_LIMIT)) {
+      if (!isSupplementalContextCandidate(element)) {
+        continue;
+      }
+      const text = extractVisibleText(element, SUPPLEMENTAL_TEXT_LIMIT);
+      if (!text || /^(copy|copied|download|open|close|share|复制|已复制|下载|打开|关闭|分享)$/i.test(text)) {
+        continue;
+      }
+      contexts.push({
+        kind: inferSupplementalContextKind(element),
+        element,
+        text
+      });
+    }
+    return compactSupplementalContexts(contexts).slice(0, SUPPLEMENTAL_CONTEXT_LIMIT);
+  }
   function getTokenizer() {
     tokenizer ??= new Tiktoken(o200k_base_default);
     return tokenizer;
@@ -8478,7 +8718,7 @@
     }
     let count = 0;
     try {
-      count = getTokenizer().encode(normalized).length;
+      count = normalized.length > TOKENIZER_TEXT_LIMIT ? approximateTokenCount(normalized) : getTokenizer().encode(normalized).length;
     } catch {
       count = approximateTokenCount(normalized);
     }
@@ -8495,11 +8735,16 @@
   function sumDescendantTokens(element, selector, seed) {
     const seen = /* @__PURE__ */ new Set();
     let total = 0;
+    let nodeCount = 0;
     for (const child of safeQueryAll(selector, element)) {
+      if (nodeCount >= TOKEN_BREAKDOWN_NODE_LIMIT) {
+        break;
+      }
       const text = extractVisibleText(child);
       if (!text) {
         continue;
       }
+      nodeCount += 1;
       const key = stableHash(text);
       if (seen.has(key)) {
         continue;
@@ -8555,11 +8800,11 @@
         return `data-turn-id:${turnId}`;
       }
       const testId = candidate.getAttribute("data-testid")?.trim();
-      if (testId && /\b(message|conversation-turn|turn)\b/i.test(testId)) {
+      if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file)\b/i.test(testId)) {
         return `data-testid:${testId}`;
       }
       const id = candidate.id.trim();
-      if (id && /\b(message|conversation|turn)\b/i.test(id)) {
+      if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file)\b/i.test(id)) {
         return `id:${id}`;
       }
     }
@@ -8588,6 +8833,21 @@
     }
     const id = getNodeSessionAnchorId(message.element);
     message.element.setAttribute(ANCHOR_ATTR, id);
+    return id;
+  }
+  function getSupplementalContextAnchorId(context) {
+    const nativeKey = getNativeMessageKey(context.element);
+    if (nativeKey) {
+      const id2 = `cnav-context-${stableHash(`${location.hostname}:${location.pathname}:${context.kind}:${nativeKey}`)}`;
+      context.element.setAttribute(ANCHOR_ATTR, id2);
+      return id2;
+    }
+    const existing = context.element.getAttribute(ANCHOR_ATTR);
+    if (existing) {
+      return existing;
+    }
+    const id = getNodeSessionAnchorId(context.element).replace("cnav-node", `cnav-context-${context.kind}`);
+    context.element.setAttribute(ANCHOR_ATTR, id);
     return id;
   }
   function compactPreview(text, maxLength) {
@@ -8679,6 +8939,31 @@
         turnIndex: items.length,
         favorite,
         heatLevel
+      });
+    }
+    for (const context of collectSupplementalContexts()) {
+      const id = getSupplementalContextAnchorId(context);
+      const message = {
+        role: "assistant",
+        element: context.element,
+        text: context.text
+      };
+      const tokenBreakdown = getTokenBreakdown(message, id);
+      if (tokenBreakdown.total <= 0) {
+        continue;
+      }
+      cumulativeTokens += tokenBreakdown.total;
+      anchorRegistry.set(id, context.element);
+      mapEntries.push({
+        id,
+        role: "assistant",
+        tokenCount: tokenBreakdown.total,
+        codeTokens: tokenBreakdown.code,
+        tableTokens: tokenBreakdown.table,
+        text: `${context.kind === "canvas" ? "Canvas" : "File"} context: ${context.text}`,
+        turnIndex: Math.max(1, items.length),
+        favorite: false,
+        heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
       });
     }
     return { items, mapEntries };
@@ -9294,24 +9579,60 @@
     const revealLatestOnNextPaintRef = (0, import_react3.useRef)(true);
     const openingTimerRef = (0, import_react3.useRef)(void 0);
     const lastRecordSignatureRef = (0, import_react3.useRef)("");
+    const scanTimerRef = (0, import_react3.useRef)(void 0);
+    const scanIdleWorkRef = (0, import_react3.useRef)(null);
+    const scanRunningRef = (0, import_react3.useRef)(false);
+    const scanQueuedRef = (0, import_react3.useRef)(false);
     favoritesRef.current = favorites;
     pageKeyRef.current = pageKey;
     settingsRef.current = settings;
     modelCatalogRef.current = modelCatalog;
     const scan = (0, import_react3.useCallback)(async () => {
-      const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
-      const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
-        favoritesRef.current,
-        budget
-      );
-      setItems(nextItems);
-      setMapEntries(nextMapEntries);
-      const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
-      if (nextSignature !== lastRecordSignatureRef.current) {
-        lastRecordSignatureRef.current = nextSignature;
-        await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+      if (scanRunningRef.current) {
+        scanQueuedRef.current = true;
+        return;
+      }
+      scanRunningRef.current = true;
+      try {
+        const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
+        const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
+          favoritesRef.current,
+          budget
+        );
+        setItems(nextItems);
+        setMapEntries(nextMapEntries);
+        const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
+        if (nextSignature !== lastRecordSignatureRef.current) {
+          lastRecordSignatureRef.current = nextSignature;
+          await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+        }
+      } finally {
+        scanRunningRef.current = false;
+        if (scanQueuedRef.current) {
+          scanQueuedRef.current = false;
+          window.setTimeout(() => {
+            scanIdleWorkRef.current = requestIdleWork(() => {
+              scanIdleWorkRef.current = null;
+              void scan();
+            });
+          }, SCAN_DEBOUNCE_MS);
+        }
       }
     }, []);
+    const scheduleScan = (0, import_react3.useCallback)((delay = SCAN_DEBOUNCE_MS) => {
+      if (scanTimerRef.current) {
+        window.clearTimeout(scanTimerRef.current);
+      }
+      cancelIdleWork(scanIdleWorkRef.current);
+      scanIdleWorkRef.current = null;
+      scanTimerRef.current = window.setTimeout(() => {
+        scanTimerRef.current = void 0;
+        scanIdleWorkRef.current = requestIdleWork(() => {
+          scanIdleWorkRef.current = null;
+          void scan();
+        });
+      }, delay);
+    }, [scan]);
     const applySettingsPatch = (patch) => {
       const nextSettings = normalizeSettings({ ...settingsRef.current, ...patch });
       settingsRef.current = nextSettings;
@@ -9372,6 +9693,7 @@
     }, []);
     (0, import_react3.useEffect)(() => {
       let cancelled = false;
+      let catalogSyncWork = null;
       async function loadModelCatalog() {
         const stored = await storageGet(MODEL_CATALOG_STORAGE_KEY);
         if (cancelled) {
@@ -9384,12 +9706,17 @@
         }
         const shouldSync = !stored?.updatedAt || Date.now() - stored.updatedAt > MODEL_SYNC_INTERVAL_MS;
         if (shouldSync) {
-          syncModelCatalog(false);
+          catalogSyncWork = requestIdleWork(() => {
+            if (!cancelled) {
+              void syncModelCatalog(false);
+            }
+          }, 3e3);
         }
       }
       loadModelCatalog();
       return () => {
         cancelled = true;
+        cancelIdleWork(catalogSyncWork);
       };
     }, [syncModelCatalog]);
     (0, import_react3.useEffect)(() => {
@@ -9456,12 +9783,25 @@
     (0, import_react3.useEffect)(() => {
       applyChatTypography(settings);
       window.requestAnimationFrame(updateResizeFrame);
-    }, [settings.chatContentWidth, settings.chatFontScale, settings.chatLetterSpacing, updateResizeFrame]);
+    }, [
+      settings.chatContentWidth,
+      settings.chatFontScale,
+      settings.chatLetterSpacing,
+      settings.chatLineHeight,
+      settings.canvasFontScale,
+      settings.canvasLetterSpacing,
+      settings.canvasLineHeight,
+      updateResizeFrame
+    ]);
     (0, import_react3.useEffect)(() => {
       return () => {
         if (openingTimerRef.current) {
           window.clearTimeout(openingTimerRef.current);
         }
+        if (scanTimerRef.current) {
+          window.clearTimeout(scanTimerRef.current);
+        }
+        cancelIdleWork(scanIdleWorkRef.current);
       };
     }, []);
     (0, import_react3.useEffect)(() => {
@@ -9503,45 +9843,47 @@
       return () => {
         cancelled = true;
       };
-    }, [pageKey, settings]);
+    }, [pageKey, settings.cacheMode]);
     (0, import_react3.useEffect)(() => {
-      const timer = window.setTimeout(() => {
-        scan();
-      }, 100);
-      return () => window.clearTimeout(timer);
+      scheduleScan(100);
     }, [
       favorites,
       modelCatalog,
       pageKey,
-      scan,
+      scheduleScan,
       settings.cacheMode,
       settings.manualTokenBudget,
       settings.tokenBudgetMode,
       settings.tokenModelId
     ]);
     (0, import_react3.useEffect)(() => {
-      let timer;
-      const scheduleScan = () => {
-        if (timer) {
-          window.clearTimeout(timer);
+      const getMutationElement = (mutation) => {
+        const target = mutation.target;
+        if (target instanceof HTMLElement) {
+          return target;
         }
-        timer = window.setTimeout(() => {
-          scan();
-        }, SCAN_DEBOUNCE_MS);
+        return target.parentElement;
       };
-      const observer = new MutationObserver(scheduleScan);
+      const observer = new MutationObserver((mutations) => {
+        const relevantMutations = mutations.filter((mutation) => {
+          const element = getMutationElement(mutation);
+          return element && !element.closest(`#${ROOT_ID}`);
+        });
+        if (relevantMutations.length === 0) {
+          return;
+        }
+        const textOnly = relevantMutations.every((mutation) => mutation.type === "characterData");
+        scheduleScan(textOnly ? STREAMING_SCAN_DEBOUNCE_MS : SCAN_DEBOUNCE_MS);
+      });
       observer.observe(document.body, {
         childList: true,
         characterData: true,
         subtree: true
       });
       return () => {
-        if (timer) {
-          window.clearTimeout(timer);
-        }
         observer.disconnect();
       };
-    }, [scan]);
+    }, [scheduleScan]);
     (0, import_react3.useEffect)(() => {
       if (settings.collapsed || items.length === 0 || favoritesOnly || query.trim() || !revealLatestOnNextPaintRef.current) {
         return void 0;
@@ -9631,6 +9973,7 @@
     const syncStatusLabel = modelSyncStatus === "syncing" ? t.tokenModelSyncing : modelSyncStatus === "synced" ? t.tokenModelSynced : modelSyncStatus === "failed" ? t.tokenModelSyncFailed : t.tokenModelSync;
     const hudPosition = tokenHudDraft ?? (settings.tokenHudX > 0 || settings.tokenHudY > 0 ? { x: settings.tokenHudX, y: settings.tokenHudY } : null);
     const cacheLabel = settings.cacheMode === "chrome" ? t.extensionCache : settings.cacheMode === "page" ? t.pageCache : t.memoryOnly;
+    const showThreadHandles = Boolean(resizeFrame && (settings.collapsed || resizingSide));
     const toggleCollapsed = async () => {
       if (settings.collapsed) {
         revealLatestOnNextPaintRef.current = true;
@@ -9842,7 +10185,7 @@
       );
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      resizeFrame ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      showThreadHandles && resizeFrame ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
@@ -9943,6 +10286,7 @@
                   }
                 )
               ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-display-section-title", children: t.chatDisplay }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.fontSize }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -9977,14 +10321,14 @@
                   {
                     type: "range",
                     min: "0",
-                    max: "1.2",
-                    step: "0.05",
+                    max: "8",
+                    step: "0.1",
                     value: settings.chatLetterSpacing,
                     onChange: (event) => updateSettings({ chatLetterSpacing: Number(event.currentTarget.value) })
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
-                  settings.chatLetterSpacing.toFixed(2),
+                  settings.chatLetterSpacing.toFixed(1),
                   "px"
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -9993,6 +10337,66 @@
                     className: "cnav-reset-button",
                     type: "button",
                     onClick: () => updateSettings({ chatLetterSpacing: 0 }),
+                    children: t.resetDisplay
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.lineSpacing }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    min: "125",
+                    max: "220",
+                    step: "1",
+                    value: settings.chatLineHeight,
+                    onChange: (event) => updateSettings({ chatLineHeight: Number(event.currentTarget.value) })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+                  settings.chatLineHeight,
+                  "%"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-reset-button",
+                    type: "button",
+                    onClick: () => updateSettings({ chatLineHeight: 155 }),
+                    children: t.resetDisplay
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.contentWidth }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    min: THREAD_WIDTH_MIN,
+                    max: THREAD_WIDTH_MAX,
+                    step: "1",
+                    value: settings.chatContentWidth,
+                    onChange: (event) => updateSettings({
+                      chatContentWidth: Number(event.currentTarget.value),
+                      chatLayoutVersion: 2
+                    })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+                  settings.chatContentWidth,
+                  "%"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-reset-button",
+                    type: "button",
+                    onClick: () => updateSettings({
+                      chatLayoutVersion: 2,
+                      chatContentWidth: OFFICIAL_THREAD_WIDTH
+                    }),
                     children: t.resetDisplay
                   }
                 )
@@ -10009,6 +10413,88 @@
                   children: t.officialWidthReset
                 }
               ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-display-section-title", children: t.canvasDisplay }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.fontSize }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    min: "75",
+                    max: "220",
+                    step: "1",
+                    value: settings.canvasFontScale,
+                    onChange: (event) => updateSettings({ canvasFontScale: Number(event.currentTarget.value) })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+                  settings.canvasFontScale,
+                  "%"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-reset-button",
+                    type: "button",
+                    onClick: () => updateSettings({ canvasFontScale: 100 }),
+                    children: t.resetDisplay
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.letterSpacing }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    min: "0",
+                    max: "8",
+                    step: "0.1",
+                    value: settings.canvasLetterSpacing,
+                    onChange: (event) => updateSettings({ canvasLetterSpacing: Number(event.currentTarget.value) })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+                  settings.canvasLetterSpacing.toFixed(1),
+                  "px"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-reset-button",
+                    type: "button",
+                    onClick: () => updateSettings({ canvasLetterSpacing: 0 }),
+                    children: t.resetDisplay
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-display-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.lineSpacing }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    min: "120",
+                    max: "230",
+                    step: "1",
+                    value: settings.canvasLineHeight,
+                    onChange: (event) => updateSettings({ canvasLineHeight: Number(event.currentTarget.value) })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+                  settings.canvasLineHeight,
+                  "%"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "cnav-reset-button",
+                    type: "button",
+                    onClick: () => updateSettings({ canvasLineHeight: 155 }),
+                    children: t.resetDisplay
+                  }
+                )
+              ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-toggle-field", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.autoCollapse }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(

@@ -38,6 +38,10 @@ export interface NavigatorSettings {
   language: AppLanguage;
   chatFontScale: number;
   chatLetterSpacing: number;
+  chatLineHeight: number;
+  canvasFontScale: number;
+  canvasLetterSpacing: number;
+  canvasLineHeight: number;
   chatLayoutVersion: 2;
   chatContentWidth: number;
   autoCollapseOnOutsideClick: boolean;
@@ -58,6 +62,10 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   language: "zh-CN",
   chatFontScale: 100,
   chatLetterSpacing: 0,
+  chatLineHeight: 155,
+  canvasFontScale: 100,
+  canvasLetterSpacing: 0,
+  canvasLineHeight: 155,
   chatLayoutVersion: 2,
   chatContentWidth: 60,
   autoCollapseOnOutsideClick: false,
@@ -105,7 +113,11 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     cacheNamespace: sanitizeCacheNamespace(value?.cacheNamespace),
     language,
     chatFontScale: clampNumber(value?.chatFontScale, 85, 220, 100),
-    chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 1.2, 0),
+    chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 8, 0),
+    chatLineHeight: clampNumber(value?.chatLineHeight, 125, 220, 155),
+    canvasFontScale: clampNumber(value?.canvasFontScale, 75, 220, 100),
+    canvasLetterSpacing: clampNumber(value?.canvasLetterSpacing, 0, 8, 0),
+    canvasLineHeight: clampNumber(value?.canvasLineHeight, 120, 230, 155),
     chatLayoutVersion: 2,
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
     autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),

@@ -31,13 +31,20 @@ import "./styles/content.css";
 const ROOT_ID = "conversation-navigator-root";
 const ANCHOR_ATTR = "data-conversation-navigator-id";
 const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
-const SCAN_DEBOUNCE_MS = 350;
+const SCAN_DEBOUNCE_MS = 650;
+const STREAMING_SCAN_DEBOUNCE_MS = 1400;
+const IDLE_SCAN_TIMEOUT_MS = 1200;
 const CHAT_STYLE_ID = "conversation-navigator-chat-style";
 const OFFICIAL_THREAD_WIDTH = 60;
 const THREAD_WIDTH_MIN = 60;
 const THREAD_WIDTH_MAX = 100;
 const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
+const TOKENIZER_TEXT_LIMIT = 12000;
+const TOKEN_BREAKDOWN_NODE_LIMIT = 80;
+const SUPPLEMENTAL_CONTEXT_LIMIT = 8;
+const SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
+const SUPPLEMENTAL_TEXT_LIMIT = 60000;
 const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_HUD_WIDTH = 246;
 const DEFAULT_HUD_GAP = 26;
@@ -67,6 +74,44 @@ const TEXT_IGNORED_CONTAINER_SELECTOR = [
   '[class*="copy" i]',
   '[class*="toolbar" i]'
 ].join(",");
+const SUPPLEMENTAL_CONTEXT_SELECTOR = [
+  '[data-testid*="canvas" i]',
+  '[data-testid*="artifact" i]',
+  '[data-testid*="document" i]',
+  '[data-testid*="attachment" i]',
+  '[data-testid*="file" i]',
+  '[aria-label*="canvas" i]',
+  '[aria-label*="artifact" i]',
+  '[aria-label*="document" i]',
+  '[aria-label*="attachment" i]',
+  '[aria-label*="file" i]',
+  '[aria-label*="画布" i]',
+  '[aria-label*="文档" i]',
+  '[aria-label*="附件" i]',
+  '[aria-label*="文件" i]',
+  '[class*="canvas" i]',
+  '[class*="artifact" i]',
+  '[class*="document" i]',
+  '[class*="attachment" i]',
+  '[class*="textLayer" i]',
+  ".ProseMirror",
+  ".cm-content",
+  ".monaco-editor",
+  '[contenteditable="true"]',
+  "[data-page-number]"
+].join(",");
+const SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR = [
+  `#${ROOT_ID}`,
+  'article[data-testid^="conversation-turn"]',
+  '[data-testid^="conversation-turn"]',
+  '[data-message-author-role]',
+  '[data-testid*="composer" i]',
+  '[aria-label*="composer" i]',
+  '[aria-label*="输入" i]',
+  '[aria-label*="發送訊息" i]',
+  '[aria-label*="发送消息" i]',
+  "form"
+].join(",");
 
 type Role = "user" | "assistant";
 type SiteId = "chatgpt";
@@ -75,6 +120,12 @@ type HeatLevel = 0 | 1 | 2 | 3;
 
 interface ParsedMessage {
   role: Role;
+  element: HTMLElement;
+  text: string;
+}
+
+interface SupplementalContext {
+  kind: "canvas" | "file";
   element: HTMLElement;
   text: string;
 }
@@ -150,6 +201,11 @@ interface StoredModelCatalog {
 }
 
 type ModelSyncStatus = "idle" | "syncing" | "synced" | "failed";
+
+interface ScheduledIdleWork {
+  id: number;
+  type: "idle" | "timer";
+}
 
 interface ResizeFrame {
   left: number;
@@ -374,8 +430,21 @@ function applyChatTypography(settings: NavigatorSettings) {
   const fontSize = `${(settings.chatFontScale / 100).toFixed(2)}rem`;
   const codeSize = `${Math.max(0.85, (settings.chatFontScale / 100) * 0.94).toFixed(2)}rem`;
   const letterSpacing = `${settings.chatLetterSpacing.toFixed(2)}px`;
+  const lineHeight = `${(settings.chatLineHeight / 100).toFixed(2)}`;
+  const codeLineHeight = `${Math.max(1.38, settings.chatLineHeight / 100 * 0.94).toFixed(2)}`;
+  const paragraphGap = `${Math.max(0.34, (settings.chatLineHeight - 125) * 0.006 + 0.26).toFixed(2)}em`;
+  const canvasFontSize = `${(settings.canvasFontScale / 100).toFixed(2)}rem`;
+  const canvasCodeSize = `${Math.max(0.82, (settings.canvasFontScale / 100) * 0.94).toFixed(2)}rem`;
+  const canvasLetterSpacing = `${settings.canvasLetterSpacing.toFixed(2)}px`;
+  const canvasLineHeight = `${(settings.canvasLineHeight / 100).toFixed(2)}`;
+  const canvasCodeLineHeight = `${Math.max(1.34, settings.canvasLineHeight / 100 * 0.94).toFixed(2)}`;
+  const canvasParagraphGap = `${Math.max(0.28, (settings.canvasLineHeight - 120) * 0.005 + 0.22).toFixed(2)}em`;
   const contentWidth = `${getThreadWidthRem(settings.chatContentWidth).toFixed(2)}rem`;
   const threadWidth = `min(${contentWidth}, calc(100vw - 24px))`;
+  const canvasTextSelector = [
+    `body :is([data-testid*="canvas" i], [data-testid*="artifact" i], [aria-label*="canvas" i], [aria-label*="画布" i], [class*="canvas" i], [class*="artifact" i], [class*="textLayer" i], .ProseMirror, .cm-content, .monaco-editor):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`,
+    `body :is([data-testid*="document" i], [aria-label*="document" i], [aria-label*="文档" i]):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`
+  ].join(",\n    ");
   const layoutWidthRules =
     settings.chatContentWidth > OFFICIAL_THREAD_WIDTH
       ? `
@@ -435,33 +504,81 @@ function applyChatTypography(settings: NavigatorSettings) {
   style.textContent = `
     ${layoutWidthRules}
 
-    main [data-message-author-role="assistant"] :is(.markdown, .whitespace-pre-wrap),
-    main [data-message-author-role="assistant"] .markdown,
-    main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words, p) {
+    main [data-message-author-role] {
       font-size: ${fontSize} !important;
       letter-spacing: ${letterSpacing} !important;
+      line-height: ${lineHeight} !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
     }
 
-    main [data-message-author-role="assistant"] :where(.markdown p, .markdown li, .markdown span, .markdown strong, .markdown em, .whitespace-pre-wrap, p, li),
-    main [data-message-author-role="user"] :where(.whitespace-pre-wrap, .break-words, p, span) {
+    main [data-message-author-role] :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
       font-size: inherit !important;
       letter-spacing: ${letterSpacing} !important;
+      line-height: ${lineHeight} !important;
     }
 
-    main [data-message-author-role="assistant"] :where(.markdown code, .markdown pre, code, pre) {
+    main [data-message-author-role] :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
+      margin-top: ${paragraphGap} !important;
+      margin-bottom: ${paragraphGap} !important;
+    }
+
+    main [data-message-author-role] :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
+      margin-top: 0 !important;
+    }
+
+    main [data-message-author-role] :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
+      margin-bottom: 0 !important;
+    }
+
+    main [data-message-author-role] :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
       font-size: ${codeSize} !important;
-      letter-spacing: ${Math.min(settings.chatLetterSpacing, 0.6).toFixed(2)}px !important;
+      letter-spacing: ${Math.min(settings.chatLetterSpacing, 2).toFixed(2)}px !important;
+      line-height: ${codeLineHeight} !important;
     }
 
     main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words) {
       max-width: min(760px, 72vw) !important;
       overflow-wrap: anywhere !important;
-      word-break: break-word !important;
+      word-break: normal !important;
     }
 
     main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
       max-height: 46vh;
       overflow-y: auto;
+    }
+
+    ${canvasTextSelector} {
+      font-size: ${canvasFontSize} !important;
+      letter-spacing: ${canvasLetterSpacing} !important;
+      line-height: ${canvasLineHeight} !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
+    }
+
+    ${canvasTextSelector} :where(.ProseMirror, .cm-line, .view-line, .view-line span, .markdown, .prose, p, li, span, strong, em, blockquote) {
+      font-size: inherit !important;
+      letter-spacing: ${canvasLetterSpacing} !important;
+      line-height: ${canvasLineHeight} !important;
+    }
+
+    ${canvasTextSelector} :where(p, li) {
+      margin-top: ${canvasParagraphGap} !important;
+      margin-bottom: ${canvasParagraphGap} !important;
+    }
+
+    ${canvasTextSelector} :where(p:first-child, li:first-child) {
+      margin-top: 0 !important;
+    }
+
+    ${canvasTextSelector} :where(p:last-child, li:last-child) {
+      margin-bottom: 0 !important;
+    }
+
+    ${canvasTextSelector} :where(code, pre, .cm-line, .view-line, .view-line span) {
+      font-size: ${canvasCodeSize} !important;
+      letter-spacing: ${Math.min(settings.canvasLetterSpacing, 2).toFixed(2)}px !important;
+      line-height: ${canvasCodeLineHeight} !important;
     }
   `;
 }
@@ -474,6 +591,41 @@ function safeQueryAll(selector: string, root: ParentNode = document): HTMLElemen
   }
 }
 
+function requestIdleWork(callback: () => void, timeout = IDLE_SCAN_TIMEOUT_MS): ScheduledIdleWork {
+  const win = window as Window & {
+    requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+  };
+
+  if (typeof win.requestIdleCallback === "function") {
+    return {
+      id: win.requestIdleCallback(() => callback(), { timeout }),
+      type: "idle"
+    };
+  }
+
+  return {
+    id: window.setTimeout(callback, 0),
+    type: "timer"
+  };
+}
+
+function cancelIdleWork(work: ScheduledIdleWork | null) {
+  if (!work) {
+    return;
+  }
+
+  const win = window as Window & {
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (work.type === "idle" && typeof win.cancelIdleCallback === "function") {
+    win.cancelIdleCallback(work.id);
+    return;
+  }
+
+  window.clearTimeout(work.id);
+}
+
 function normalizeText(value: string): string {
   return value
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
@@ -482,8 +634,9 @@ function normalizeText(value: string): string {
     .trim();
 }
 
-function extractVisibleText(element: HTMLElement): string {
+function extractVisibleText(element: HTMLElement, maxCharacters = Number.POSITIVE_INFINITY): string {
   const parts: string[] = [];
+  let length = 0;
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
@@ -515,7 +668,14 @@ function extractVisibleText(element: HTMLElement): string {
   while (walker.nextNode()) {
     const text = walker.currentNode.nodeValue;
     if (text) {
-      parts.push(text);
+      const available = maxCharacters - length;
+      if (available <= 0) {
+        break;
+      }
+
+      const nextText = text.length > available ? text.slice(0, available) : text;
+      parts.push(nextText);
+      length += nextText.length;
     }
   }
 
@@ -659,6 +819,118 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+function isSupplementalContextCandidate(element: HTMLElement): boolean {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === "html" || tagName === "body" || tagName === "main") {
+    return false;
+  }
+
+  if (!isVisibleElement(element) || element.closest(SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR)) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 40 || rect.height < 12) {
+    return false;
+  }
+
+  return true;
+}
+
+function sortSupplementalContexts(contexts: SupplementalContext[]): SupplementalContext[] {
+  return [...contexts].sort((a, b) => {
+    if (a.element === b.element) {
+      return 0;
+    }
+
+    const position = a.element.compareDocumentPosition(b.element);
+    return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+  });
+}
+
+function compactSupplementalContexts(contexts: SupplementalContext[]): SupplementalContext[] {
+  const compacted: SupplementalContext[] = [];
+  const seenText = new Set<string>();
+
+  for (const context of sortSupplementalContexts(contexts).map((context) => ({
+      ...context,
+      text: normalizeText(context.text)
+    }))) {
+    if (!context.text || context.text.length < 4 || !document.body.contains(context.element)) {
+      continue;
+    }
+
+    const textKey = stableHash(`${context.kind}:${context.text}`);
+    if (seenText.has(textKey)) {
+      continue;
+    }
+
+    let shouldAdd = true;
+    for (let index = 0; index < compacted.length; index += 1) {
+      const existing = compacted[index];
+      const nested = existing.element.contains(context.element) || context.element.contains(existing.element);
+      const overlappingText =
+        existing.text === context.text || existing.text.includes(context.text) || context.text.includes(existing.text);
+
+      if (!nested && !overlappingText) {
+        continue;
+      }
+
+      if (context.text.length > existing.text.length && context.element.contains(existing.element)) {
+        compacted[index] = context;
+      }
+
+      shouldAdd = false;
+      break;
+    }
+
+    if (shouldAdd) {
+      compacted.push(context);
+      seenText.add(textKey);
+    }
+  }
+
+  return compacted;
+}
+
+function inferSupplementalContextKind(element: HTMLElement): SupplementalContext["kind"] {
+  const descriptor = [
+    element.id,
+    element.className,
+    element.getAttribute("aria-label"),
+    element.getAttribute("data-testid"),
+    element.getAttribute("data-test-id")
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return /(canvas|artifact|画布|prosemirror|cm-content|monaco)/i.test(descriptor) ? "canvas" : "file";
+}
+
+function collectSupplementalContexts(): SupplementalContext[] {
+  const contexts: SupplementalContext[] = [];
+
+  for (const element of safeQueryAll(SUPPLEMENTAL_CONTEXT_SELECTOR).slice(0, SUPPLEMENTAL_CANDIDATE_LIMIT)) {
+    if (!isSupplementalContextCandidate(element)) {
+      continue;
+    }
+
+    const text = extractVisibleText(element, SUPPLEMENTAL_TEXT_LIMIT);
+    if (!text || /^(copy|copied|download|open|close|share|复制|已复制|下载|打开|关闭|分享)$/i.test(text)) {
+      continue;
+    }
+
+    contexts.push({
+      kind: inferSupplementalContextKind(element),
+      element,
+      text
+    });
+  }
+
+  return compactSupplementalContexts(contexts).slice(0, SUPPLEMENTAL_CONTEXT_LIMIT);
+}
+
 function getTokenizer(): Tiktoken {
   tokenizer ??= new Tiktoken(o200kBase);
   return tokenizer;
@@ -690,7 +962,10 @@ function countTokens(text: string, cacheSeed: string): number {
 
   let count = 0;
   try {
-    count = getTokenizer().encode(normalized).length;
+    count =
+      normalized.length > TOKENIZER_TEXT_LIMIT
+        ? approximateTokenCount(normalized)
+        : getTokenizer().encode(normalized).length;
   } catch {
     count = approximateTokenCount(normalized);
   }
@@ -710,13 +985,19 @@ function countTokens(text: string, cacheSeed: string): number {
 function sumDescendantTokens(element: HTMLElement, selector: string, seed: string): number {
   const seen = new Set<string>();
   let total = 0;
+  let nodeCount = 0;
 
   for (const child of safeQueryAll(selector, element)) {
+    if (nodeCount >= TOKEN_BREAKDOWN_NODE_LIMIT) {
+      break;
+    }
+
     const text = extractVisibleText(child);
     if (!text) {
       continue;
     }
 
+    nodeCount += 1;
     const key = stableHash(text);
     if (seen.has(key)) {
       continue;
@@ -784,12 +1065,12 @@ function getNativeMessageKey(element: HTMLElement): string | null {
     }
 
     const testId = candidate.getAttribute("data-testid")?.trim();
-    if (testId && /\b(message|conversation-turn|turn)\b/i.test(testId)) {
+    if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file)\b/i.test(testId)) {
       return `data-testid:${testId}`;
     }
 
     const id = candidate.id.trim();
-    if (id && /\b(message|conversation|turn)\b/i.test(id)) {
+    if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file)\b/i.test(id)) {
       return `id:${id}`;
     }
   }
@@ -824,6 +1105,24 @@ function getStableAnchorId(message: ParsedMessage): string {
 
   const id = getNodeSessionAnchorId(message.element);
   message.element.setAttribute(ANCHOR_ATTR, id);
+  return id;
+}
+
+function getSupplementalContextAnchorId(context: SupplementalContext): string {
+  const nativeKey = getNativeMessageKey(context.element);
+  if (nativeKey) {
+    const id = `cnav-context-${stableHash(`${location.hostname}:${location.pathname}:${context.kind}:${nativeKey}`)}`;
+    context.element.setAttribute(ANCHOR_ATTR, id);
+    return id;
+  }
+
+  const existing = context.element.getAttribute(ANCHOR_ATTR);
+  if (existing) {
+    return existing;
+  }
+
+  const id = getNodeSessionAnchorId(context.element).replace("cnav-node", `cnav-context-${context.kind}`);
+  context.element.setAttribute(ANCHOR_ATTR, id);
   return id;
 }
 
@@ -930,6 +1229,33 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       turnIndex: items.length,
       favorite,
       heatLevel
+    });
+  }
+
+  for (const context of collectSupplementalContexts()) {
+    const id = getSupplementalContextAnchorId(context);
+    const message: ParsedMessage = {
+      role: "assistant",
+      element: context.element,
+      text: context.text
+    };
+    const tokenBreakdown = getTokenBreakdown(message, id);
+    if (tokenBreakdown.total <= 0) {
+      continue;
+    }
+
+    cumulativeTokens += tokenBreakdown.total;
+    anchorRegistry.set(id, context.element);
+    mapEntries.push({
+      id,
+      role: "assistant",
+      tokenCount: tokenBreakdown.total,
+      codeTokens: tokenBreakdown.code,
+      tableTokens: tokenBreakdown.table,
+      text: `${context.kind === "canvas" ? "Canvas" : "File"} context: ${context.text}`,
+      turnIndex: Math.max(1, items.length),
+      favorite: false,
+      heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
     });
   }
 
@@ -1709,6 +2035,10 @@ function ConversationNavigator() {
   const revealLatestOnNextPaintRef = useRef(true);
   const openingTimerRef = useRef<number | undefined>(undefined);
   const lastRecordSignatureRef = useRef("");
+  const scanTimerRef = useRef<number | undefined>(undefined);
+  const scanIdleWorkRef = useRef<ScheduledIdleWork | null>(null);
+  const scanRunningRef = useRef(false);
+  const scanQueuedRef = useRef(false);
 
   favoritesRef.current = favorites;
   pageKeyRef.current = pageKey;
@@ -1716,19 +2046,54 @@ function ConversationNavigator() {
   modelCatalogRef.current = modelCatalog;
 
   const scan = useCallback(async () => {
-    const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
-    const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
-      favoritesRef.current,
-      budget
-    );
-    setItems(nextItems);
-    setMapEntries(nextMapEntries);
-    const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
-    if (nextSignature !== lastRecordSignatureRef.current) {
-      lastRecordSignatureRef.current = nextSignature;
-      await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+    if (scanRunningRef.current) {
+      scanQueuedRef.current = true;
+      return;
+    }
+
+    scanRunningRef.current = true;
+    try {
+      const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
+      const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
+        favoritesRef.current,
+        budget
+      );
+      setItems(nextItems);
+      setMapEntries(nextMapEntries);
+      const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
+      if (nextSignature !== lastRecordSignatureRef.current) {
+        lastRecordSignatureRef.current = nextSignature;
+        await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+      }
+    } finally {
+      scanRunningRef.current = false;
+      if (scanQueuedRef.current) {
+        scanQueuedRef.current = false;
+        window.setTimeout(() => {
+          scanIdleWorkRef.current = requestIdleWork(() => {
+            scanIdleWorkRef.current = null;
+            void scan();
+          });
+        }, SCAN_DEBOUNCE_MS);
+      }
     }
   }, []);
+
+  const scheduleScan = useCallback((delay = SCAN_DEBOUNCE_MS) => {
+    if (scanTimerRef.current) {
+      window.clearTimeout(scanTimerRef.current);
+    }
+    cancelIdleWork(scanIdleWorkRef.current);
+    scanIdleWorkRef.current = null;
+
+    scanTimerRef.current = window.setTimeout(() => {
+      scanTimerRef.current = undefined;
+      scanIdleWorkRef.current = requestIdleWork(() => {
+        scanIdleWorkRef.current = null;
+        void scan();
+      });
+    }, delay);
+  }, [scan]);
 
   const applySettingsPatch = (patch: Partial<NavigatorSettings>) => {
     const nextSettings = normalizeSettings({ ...settingsRef.current, ...patch });
@@ -1800,6 +2165,7 @@ function ConversationNavigator() {
 
   useEffect(() => {
     let cancelled = false;
+    let catalogSyncWork: ScheduledIdleWork | null = null;
 
     async function loadModelCatalog() {
       const stored = await storageGet<StoredModelCatalog>(MODEL_CATALOG_STORAGE_KEY);
@@ -1815,7 +2181,11 @@ function ConversationNavigator() {
 
       const shouldSync = !stored?.updatedAt || Date.now() - stored.updatedAt > MODEL_SYNC_INTERVAL_MS;
       if (shouldSync) {
-        syncModelCatalog(false);
+        catalogSyncWork = requestIdleWork(() => {
+          if (!cancelled) {
+            void syncModelCatalog(false);
+          }
+        }, 3000);
       }
     }
 
@@ -1823,6 +2193,7 @@ function ConversationNavigator() {
 
     return () => {
       cancelled = true;
+      cancelIdleWork(catalogSyncWork);
     };
   }, [syncModelCatalog]);
 
@@ -1907,13 +2278,26 @@ function ConversationNavigator() {
   useEffect(() => {
     applyChatTypography(settings);
     window.requestAnimationFrame(updateResizeFrame);
-  }, [settings.chatContentWidth, settings.chatFontScale, settings.chatLetterSpacing, updateResizeFrame]);
+  }, [
+    settings.chatContentWidth,
+    settings.chatFontScale,
+    settings.chatLetterSpacing,
+    settings.chatLineHeight,
+    settings.canvasFontScale,
+    settings.canvasLetterSpacing,
+    settings.canvasLineHeight,
+    updateResizeFrame
+  ]);
 
   useEffect(() => {
     return () => {
       if (openingTimerRef.current) {
         window.clearTimeout(openingTimerRef.current);
       }
+      if (scanTimerRef.current) {
+        window.clearTimeout(scanTimerRef.current);
+      }
+      cancelIdleWork(scanIdleWorkRef.current);
     };
   }, []);
 
@@ -1969,19 +2353,15 @@ function ConversationNavigator() {
     return () => {
       cancelled = true;
     };
-  }, [pageKey, settings]);
+  }, [pageKey, settings.cacheMode]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      scan();
-    }, 100);
-
-    return () => window.clearTimeout(timer);
+    scheduleScan(100);
   }, [
     favorites,
     modelCatalog,
     pageKey,
-    scan,
+    scheduleScan,
     settings.cacheMode,
     settings.manualTokenBudget,
     settings.tokenBudgetMode,
@@ -1989,18 +2369,29 @@ function ConversationNavigator() {
   ]);
 
   useEffect(() => {
-    let timer: number | undefined;
-    const scheduleScan = () => {
-      if (timer) {
-        window.clearTimeout(timer);
+    const getMutationElement = (mutation: MutationRecord): HTMLElement | null => {
+      const target = mutation.target;
+      if (target instanceof HTMLElement) {
+        return target;
       }
 
-      timer = window.setTimeout(() => {
-        scan();
-      }, SCAN_DEBOUNCE_MS);
+      return target.parentElement;
     };
 
-    const observer = new MutationObserver(scheduleScan);
+    const observer = new MutationObserver((mutations) => {
+      const relevantMutations = mutations.filter((mutation) => {
+        const element = getMutationElement(mutation);
+        return element && !element.closest(`#${ROOT_ID}`);
+      });
+
+      if (relevantMutations.length === 0) {
+        return;
+      }
+
+      const textOnly = relevantMutations.every((mutation) => mutation.type === "characterData");
+      scheduleScan(textOnly ? STREAMING_SCAN_DEBOUNCE_MS : SCAN_DEBOUNCE_MS);
+    });
+
     observer.observe(document.body, {
       childList: true,
       characterData: true,
@@ -2008,12 +2399,9 @@ function ConversationNavigator() {
     });
 
     return () => {
-      if (timer) {
-        window.clearTimeout(timer);
-      }
       observer.disconnect();
     };
-  }, [scan]);
+  }, [scheduleScan]);
 
   useEffect(() => {
     if (
@@ -2148,6 +2536,7 @@ function ConversationNavigator() {
       : settings.cacheMode === "page"
         ? t.pageCache
         : t.memoryOnly;
+  const showThreadHandles = Boolean(resizeFrame && (settings.collapsed || resizingSide));
 
   const toggleCollapsed = async () => {
     if (settings.collapsed) {
@@ -2397,7 +2786,7 @@ function ConversationNavigator() {
 
   return (
     <>
-      {resizeFrame ? (
+      {showThreadHandles && resizeFrame ? (
         <>
           <button
             className={`cnav-thread-handle is-left${resizingSide === "left" ? " is-dragging" : ""}`}
@@ -2496,6 +2885,7 @@ function ConversationNavigator() {
                   ))}
                 </select>
               </label>
+              <div className="cnav-display-section-title">{t.chatDisplay}</div>
               <div className="cnav-display-field">
                 <span>{t.fontSize}</span>
                 <input
@@ -2520,18 +2910,68 @@ function ConversationNavigator() {
                 <input
                   type="range"
                   min="0"
-                  max="1.2"
-                  step="0.05"
+                  max="8"
+                  step="0.1"
                   value={settings.chatLetterSpacing}
                   onChange={(event) =>
                     updateSettings({ chatLetterSpacing: Number(event.currentTarget.value) })
                   }
                 />
-                <output>{settings.chatLetterSpacing.toFixed(2)}px</output>
+                <output>{settings.chatLetterSpacing.toFixed(1)}px</output>
                 <button
                   className="cnav-reset-button"
                   type="button"
                   onClick={() => updateSettings({ chatLetterSpacing: 0 })}
+                >
+                  {t.resetDisplay}
+                </button>
+              </div>
+              <div className="cnav-display-field">
+                <span>{t.lineSpacing}</span>
+                <input
+                  type="range"
+                  min="125"
+                  max="220"
+                  step="1"
+                  value={settings.chatLineHeight}
+                  onChange={(event) =>
+                    updateSettings({ chatLineHeight: Number(event.currentTarget.value) })
+                  }
+                />
+                <output>{settings.chatLineHeight}%</output>
+                <button
+                  className="cnav-reset-button"
+                  type="button"
+                  onClick={() => updateSettings({ chatLineHeight: 155 })}
+                >
+                  {t.resetDisplay}
+                </button>
+              </div>
+              <div className="cnav-display-field">
+                <span>{t.contentWidth}</span>
+                <input
+                  type="range"
+                  min={THREAD_WIDTH_MIN}
+                  max={THREAD_WIDTH_MAX}
+                  step="1"
+                  value={settings.chatContentWidth}
+                  onChange={(event) =>
+                    updateSettings({
+                      chatContentWidth: Number(event.currentTarget.value),
+                      chatLayoutVersion: 2
+                    })
+                  }
+                />
+                <output>{settings.chatContentWidth}%</output>
+                <button
+                  className="cnav-reset-button"
+                  type="button"
+                  onClick={() =>
+                    updateSettings({
+                      chatLayoutVersion: 2,
+                      chatContentWidth: OFFICIAL_THREAD_WIDTH
+                    })
+                  }
                 >
                   {t.resetDisplay}
                 </button>
@@ -2548,6 +2988,68 @@ function ConversationNavigator() {
               >
                 {t.officialWidthReset}
               </button>
+              <div className="cnav-display-section-title">{t.canvasDisplay}</div>
+              <div className="cnav-display-field">
+                <span>{t.fontSize}</span>
+                <input
+                  type="range"
+                  min="75"
+                  max="220"
+                  step="1"
+                  value={settings.canvasFontScale}
+                  onChange={(event) => updateSettings({ canvasFontScale: Number(event.currentTarget.value) })}
+                />
+                <output>{settings.canvasFontScale}%</output>
+                <button
+                  className="cnav-reset-button"
+                  type="button"
+                  onClick={() => updateSettings({ canvasFontScale: 100 })}
+                >
+                  {t.resetDisplay}
+                </button>
+              </div>
+              <div className="cnav-display-field">
+                <span>{t.letterSpacing}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="8"
+                  step="0.1"
+                  value={settings.canvasLetterSpacing}
+                  onChange={(event) =>
+                    updateSettings({ canvasLetterSpacing: Number(event.currentTarget.value) })
+                  }
+                />
+                <output>{settings.canvasLetterSpacing.toFixed(1)}px</output>
+                <button
+                  className="cnav-reset-button"
+                  type="button"
+                  onClick={() => updateSettings({ canvasLetterSpacing: 0 })}
+                >
+                  {t.resetDisplay}
+                </button>
+              </div>
+              <div className="cnav-display-field">
+                <span>{t.lineSpacing}</span>
+                <input
+                  type="range"
+                  min="120"
+                  max="230"
+                  step="1"
+                  value={settings.canvasLineHeight}
+                  onChange={(event) =>
+                    updateSettings({ canvasLineHeight: Number(event.currentTarget.value) })
+                  }
+                />
+                <output>{settings.canvasLineHeight}%</output>
+                <button
+                  className="cnav-reset-button"
+                  type="button"
+                  onClick={() => updateSettings({ canvasLineHeight: 155 })}
+                >
+                  {t.resetDisplay}
+                </button>
+              </div>
               <label className="cnav-toggle-field">
                 <span>{t.autoCollapse}</span>
                 <input

@@ -1,6 +1,15 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
+  width: 320px;
   min-width: 320px;
+  max-width: 320px;
   margin: 0;
+  overflow-x: hidden;
   background: #f7f7f8;
   color: #202123;
   font-family:
@@ -22,6 +31,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  width: 100%;
+  min-width: 0;
   padding: 16px;
 }
 
@@ -30,6 +41,7 @@ button {
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+  min-width: 0;
 }
 
 .popup-mark {
@@ -45,24 +57,31 @@ button {
 
 .popup-header h1 {
   margin: 0 0 3px;
+  overflow: hidden;
   font-size: 15px;
   line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .popup-header p {
   margin: 0;
+  overflow: hidden;
   color: #64748b;
   font-size: 12px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .popup-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  min-width: 0;
 }
 
 .popup-stats div {
+  min-width: 0;
   padding: 12px;
   border: 1px solid rgba(0, 0, 0, 0.09);
   border-radius: 8px;
@@ -90,6 +109,7 @@ button {
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
   align-items: start;
+  min-width: 0;
   padding: 10px;
   border: 1px solid rgba(22, 163, 74, 0.25);
   border-radius: 8px;
@@ -101,6 +121,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   padding: 12px;
   border: 1px solid rgba(0, 0, 0, 0.09);
   border-radius: 8px;
@@ -111,6 +132,7 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
   color: #202123;
   font-size: 13px;
   font-weight: 750;
@@ -118,15 +140,19 @@ button {
 
 .popup-settings-title small {
   margin-left: auto;
+  overflow: hidden;
   color: #64748b;
   font-size: 11px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .popup-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .popup-field span {
@@ -142,6 +168,7 @@ button {
 .popup-field select,
 .popup-field input {
   width: 100%;
+  min-width: 0;
   height: 34px;
   border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 8px;
@@ -163,6 +190,7 @@ button {
   color: #64748b;
   font-size: 11px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .popup-privacy p {
@@ -209,6 +237,11 @@ code {
   color: #64748b;
   font-size: 11px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.popup-footnote code {
+  word-break: break-all;
 }
 
 @media (prefers-color-scheme: dark) {
