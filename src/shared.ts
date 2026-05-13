@@ -1,11 +1,15 @@
 export const DEFAULT_CACHE_NAMESPACE = "conversationNavigator";
 export const STORAGE_RECORD_PREFIX = `${DEFAULT_CACHE_NAMESPACE}:page:`;
 export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
+export const PAGE_CACHE_LIST_MESSAGE = "conversationNavigator:pageCache:list";
+export const PAGE_CACHE_CLEAR_MESSAGE = "conversationNavigator:pageCache:clear";
 
 export type CacheMode = "chrome" | "page" | "off";
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
 export type TokenPanelMode = "floating" | "dock";
 export type TokenBudgetMode = "model" | "manual";
+export type AdapterHealthStatus = "ok" | "degraded" | "unsupported";
+export type CompatRulesSource = "built-in" | "remote";
 
 export interface StoredNavigatorNode {
   id: string;
@@ -29,6 +33,18 @@ export interface StoredConversationRecord {
   updatedAt: number;
   nodes: StoredNavigatorNode[];
   favorites: Record<string, true>;
+  health?: StoredAdapterHealth;
+}
+
+export interface StoredAdapterHealth {
+  status: AdapterHealthStatus;
+  reason: string;
+  ruleId: string;
+  messageCount: number;
+  userCount: number;
+  assistantCount: number;
+  source: CompatRulesSource;
+  updatedAt: number;
 }
 
 export interface NavigatorSettings {
@@ -53,6 +69,10 @@ export interface NavigatorSettings {
   manualTokenBudget: number;
   tokenHudX: number;
   tokenHudY: number;
+  compatRulesRemoteEnabled: boolean;
+  compatRulesLastSyncAt: number;
+  compatRulesSource: CompatRulesSource;
+  navigateAnimationEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: NavigatorSettings = {
@@ -76,7 +96,11 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   tokenModelId: "chatgpt-auto",
   manualTokenBudget: 128000,
   tokenHudX: 0,
-  tokenHudY: 0
+  tokenHudY: 0,
+  compatRulesRemoteEnabled: false,
+  compatRulesLastSyncAt: 0,
+  compatRulesSource: "built-in",
+  navigateAnimationEnabled: true
 };
 
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -105,6 +129,7 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
   const tokenPanelMode: TokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
   const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
+  const compatRulesSource: CompatRulesSource = value?.compatRulesSource === "remote" ? "remote" : "built-in";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
   return {
@@ -130,7 +155,11 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
       : "chatgpt-auto",
     manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 2000000, 128000)),
     tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
-    tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0))
+    tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0)),
+    compatRulesRemoteEnabled: Boolean(value?.compatRulesRemoteEnabled),
+    compatRulesLastSyncAt: Math.round(clampNumber(value?.compatRulesLastSyncAt, 0, Number.MAX_SAFE_INTEGER, 0)),
+    compatRulesSource: value?.compatRulesRemoteEnabled ? compatRulesSource : "built-in",
+    navigateAnimationEnabled: value?.navigateAnimationEnabled !== false
   };
 }
 

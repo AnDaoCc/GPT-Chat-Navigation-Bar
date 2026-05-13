@@ -7409,6 +7409,8 @@
   var DEFAULT_CACHE_NAMESPACE = "conversationNavigator";
   var STORAGE_RECORD_PREFIX = `${DEFAULT_CACHE_NAMESPACE}:page:`;
   var STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
+  var PAGE_CACHE_LIST_MESSAGE = "conversationNavigator:pageCache:list";
+  var PAGE_CACHE_CLEAR_MESSAGE = "conversationNavigator:pageCache:clear";
   var DEFAULT_SETTINGS = {
     collapsed: false,
     cacheMode: "chrome",
@@ -7430,7 +7432,11 @@
     tokenModelId: "chatgpt-auto",
     manualTokenBudget: 128e3,
     tokenHudX: 0,
-    tokenHudY: 0
+    tokenHudY: 0,
+    compatRulesRemoteEnabled: false,
+    compatRulesLastSyncAt: 0,
+    compatRulesSource: "built-in",
+    navigateAnimationEnabled: true
   };
   function clampNumber(value, min, max, fallback) {
     const number = typeof value === "number" ? value : Number(value);
@@ -7448,6 +7454,7 @@
     const language = value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
     const tokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
     const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
+    const compatRulesSource = value?.compatRulesSource === "remote" ? "remote" : "built-in";
     const isCurrentLayout = value?.chatLayoutVersion === 2;
     return {
       collapsed: Boolean(value?.collapsed),
@@ -7470,7 +7477,11 @@
       tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim() ? value.tokenModelId.trim().slice(0, 80) : "chatgpt-auto",
       manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 2e6, 128e3)),
       tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 1e4, 0)),
-      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0))
+      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0)),
+      compatRulesRemoteEnabled: Boolean(value?.compatRulesRemoteEnabled),
+      compatRulesLastSyncAt: Math.round(clampNumber(value?.compatRulesLastSyncAt, 0, Number.MAX_SAFE_INTEGER, 0)),
+      compatRulesSource: value?.compatRulesRemoteEnabled ? compatRulesSource : "built-in",
+      navigateAnimationEnabled: value?.navigateAnimationEnabled !== false
     };
   }
   function isNavigatorRecordKey(key, namespace) {
@@ -7507,11 +7518,15 @@
       contentWidth: "\u6B63\u6587\u5BBD\u5EA6",
       officialWidthReset: "\u6062\u590D\u5B98\u65B9\u9ED1\u8FB9",
       autoCollapse: "\u70B9\u51FB\u5916\u90E8\u81EA\u52A8\u6536\u8D77",
+      navigateAnimation: "\u5B9A\u4F4D\u52A8\u753B",
+      scrollToTop: "\u56DE\u5230\u804A\u5929\u9876\u90E8",
+      scrollToBottom: "\u56DE\u5230\u804A\u5929\u5E95\u90E8",
       resetDisplay: "\u91CD\u7F6E",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "\u8FD8\u6CA1\u6709\u8BC6\u522B\u5230\u5F53\u524D\u5BF9\u8BDD\u8282\u70B9\u3002",
       noNodeMatches: "\u6CA1\u6709\u5339\u914D\u7684\u5BF9\u8BDD\u8282\u70B9\u3002",
       nodesIndexed: "\u4E2A\u8282\u70B9\u5DF2\u672C\u5730\u7D22\u5F15",
+      nodeUnmounted: "\u6682\u672A\u52A0\u8F7D\uFF0C\u6EDA\u52A8\u5230\u9644\u8FD1\u540E\u53EF\u5B9A\u4F4D",
       extensionCache: "\u6269\u5C55\u7F13\u5B58",
       pageCache: "\u9875\u9762\u7F13\u5B58",
       memoryOnly: "\u4EC5\u5185\u5B58",
@@ -7520,7 +7535,7 @@
       popupSubtitle: "\u4EC5\u4F5C\u7528\u4E8E ChatGPT \u9875\u9762\u7684\u672C\u5730\u5BFC\u822A\u5DE5\u5177\u3002",
       pages: "\u9875\u9762",
       nodes: "\u8282\u70B9",
-      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u6A21\u578B\u76EE\u5F55\u540C\u6B65\u4F1A\u8BBF\u95EE OpenAI \u5B98\u7F51\u6587\u6863\u548C\u9879\u76EE\u6A21\u578B\u6E05\u5355\uFF0C\u4F46\u4E0D\u4F1A\u4E0A\u4F20\u6216\u4F20\u8F93\u804A\u5929\u5185\u5BB9\u3002",
+      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u6A21\u578B\u76EE\u5F55\u548C\u517C\u5BB9\u89C4\u5219\u540C\u6B65\u53EA\u4E0B\u8F7D\u516C\u5F00\u5143\u6570\u636E\uFF0C\u4E0D\u4F1A\u4E0A\u4F20\u6216\u4F20\u8F93\u804A\u5929\u5185\u5BB9\u3002",
       cacheLocation: "\u7F13\u5B58\u4F4D\u7F6E",
       saving: "\u4FDD\u5B58\u4E2D",
       storageTarget: "\u5B58\u50A8\u76EE\u6807",
@@ -7560,7 +7575,25 @@
       tokenTableShare: "\u8868\u683C",
       tokenHeat: "\u70ED\u533A",
       tokenNoData: "\u7B49\u5F85\u5BF9\u8BDD\u5185\u5BB9",
-      estimatedOnly: "\u4EC5\u57FA\u4E8E\u9875\u9762\u53EF\u89C1\u5185\u5BB9\u4F30\u7B97"
+      estimatedOnly: "\u4EC5\u57FA\u4E8E\u9875\u9762\u53EF\u89C1\u5185\u5BB9\u4F30\u7B97",
+      tokenVisibleDomOnly: "\u4EC5\u7EDF\u8BA1\u9875\u9762\u53EF\u89C1 DOM \u5185\u5BB9\uFF1B\u4E0D\u5305\u542B\u9690\u85CF\u7CFB\u7EDF Prompt\u3001\u670D\u52A1\u7AEF Memory \u6216\u4E0A\u4F20\u6587\u4EF6\u539F\u6587\u3002",
+      adapterStatusOk: "\u6B63\u5E38",
+      adapterStatusDegraded: "\u90E8\u5206\u964D\u7EA7",
+      adapterStatusUnsupported: "\u672A\u8BC6\u522B\u9875\u9762",
+      compatRules: "\u517C\u5BB9\u89C4\u5219",
+      compatRulesSource: "\u89C4\u5219\u6765\u6E90",
+      compatRulesBuiltIn: "\u5185\u7F6E\u89C4\u5219",
+      compatRulesRemote: "\u8FDC\u7A0B\u89C4\u5219",
+      compatRulesActive: "\u5F53\u524D\u89C4\u5219",
+      compatRulesLastSync: "\u4E0A\u6B21\u540C\u6B65",
+      compatRulesNeverSynced: "\u4ECE\u672A\u540C\u6B65",
+      compatRulesSync: "\u540C\u6B65",
+      compatRulesSyncing: "\u540C\u6B65\u4E2D",
+      compatRulesSynced: "\u5DF2\u540C\u6B65",
+      compatRulesSyncFailed: "\u540C\u6B65\u5931\u8D25",
+      compatRulesReset: "\u6062\u590D\u5185\u7F6E",
+      compatRulesCount: "\u6761\u89C4\u5219",
+      compatRulesNote: "\u8FDC\u7A0B\u517C\u5BB9\u89C4\u5219\u9ED8\u8BA4\u5173\u95ED\uFF0C\u53EA\u4E0B\u8F7D JSON \u914D\u7F6E\uFF0C\u4E0D\u4E0B\u8F7D\u6216\u6267\u884C\u8FDC\u7A0B\u4EE3\u7801\u3002"
     },
     "zh-TW": {
       appName: "GPT\u804A\u5929\u5C0E\u822A\u5668",
@@ -7582,11 +7615,15 @@
       contentWidth: "\u6B63\u6587\u5BEC\u5EA6",
       officialWidthReset: "\u6062\u5FA9\u5B98\u65B9\u9ED1\u908A",
       autoCollapse: "\u9EDE\u64CA\u5916\u90E8\u81EA\u52D5\u6536\u5408",
+      navigateAnimation: "\u5B9A\u4F4D\u52D5\u756B",
+      scrollToTop: "\u56DE\u5230\u804A\u5929\u9802\u90E8",
+      scrollToBottom: "\u56DE\u5230\u804A\u5929\u5E95\u90E8",
       resetDisplay: "\u91CD\u8A2D",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "\u5C1A\u672A\u8B58\u5225\u5230\u76EE\u524D\u5C0D\u8A71\u7BC0\u9EDE\u3002",
       noNodeMatches: "\u6C92\u6709\u7B26\u5408\u7684\u5C0D\u8A71\u7BC0\u9EDE\u3002",
       nodesIndexed: "\u500B\u7BC0\u9EDE\u5DF2\u672C\u6A5F\u7D22\u5F15",
+      nodeUnmounted: "\u66AB\u672A\u8F09\u5165\uFF0C\u6372\u52D5\u5230\u9644\u8FD1\u5F8C\u53EF\u5B9A\u4F4D",
       extensionCache: "\u64F4\u5145\u529F\u80FD\u5FEB\u53D6",
       pageCache: "\u9801\u9762\u5FEB\u53D6",
       memoryOnly: "\u50C5\u8A18\u61B6\u9AD4",
@@ -7595,7 +7632,7 @@
       popupSubtitle: "\u53EA\u4F5C\u7528\u65BC ChatGPT \u9801\u9762\u7684\u672C\u6A5F\u5C0E\u89BD\u5DE5\u5177\u3002",
       pages: "\u9801\u9762",
       nodes: "\u7BC0\u9EDE",
-      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u6A21\u578B\u76EE\u9304\u540C\u6B65\u6703\u5B58\u53D6 OpenAI \u5B98\u65B9\u6587\u4EF6\u548C\u5C08\u6848\u6A21\u578B\u6E05\u55AE\uFF0C\u4F46\u4E0D\u6703\u4E0A\u50B3\u6216\u50B3\u8F38\u804A\u5929\u5167\u5BB9\u3002",
+      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u6A21\u578B\u76EE\u9304\u548C\u76F8\u5BB9\u898F\u5247\u540C\u6B65\u53EA\u4E0B\u8F09\u516C\u958B\u4E2D\u7E7C\u8CC7\u6599\uFF0C\u4E0D\u6703\u4E0A\u50B3\u6216\u50B3\u8F38\u804A\u5929\u5167\u5BB9\u3002",
       cacheLocation: "\u5FEB\u53D6\u4F4D\u7F6E",
       saving: "\u5132\u5B58\u4E2D",
       storageTarget: "\u5132\u5B58\u76EE\u6A19",
@@ -7635,7 +7672,25 @@
       tokenTableShare: "\u8868\u683C",
       tokenHeat: "\u71B1\u5340",
       tokenNoData: "\u7B49\u5F85\u5C0D\u8A71\u5167\u5BB9",
-      estimatedOnly: "\u50C5\u4F9D\u9801\u9762\u53EF\u898B\u5167\u5BB9\u4F30\u7B97"
+      estimatedOnly: "\u50C5\u4F9D\u9801\u9762\u53EF\u898B\u5167\u5BB9\u4F30\u7B97",
+      tokenVisibleDomOnly: "\u50C5\u7D71\u8A08\u9801\u9762\u53EF\u898B DOM \u5167\u5BB9\uFF1B\u4E0D\u5305\u542B\u96B1\u85CF\u7CFB\u7D71 Prompt\u3001\u670D\u52D9\u7AEF Memory \u6216\u4E0A\u50B3\u6587\u4EF6\u539F\u6587\u3002",
+      adapterStatusOk: "\u6B63\u5E38",
+      adapterStatusDegraded: "\u90E8\u5206\u964D\u7D1A",
+      adapterStatusUnsupported: "\u672A\u8B58\u5225\u9801\u9762",
+      compatRules: "\u76F8\u5BB9\u898F\u5247",
+      compatRulesSource: "\u898F\u5247\u4F86\u6E90",
+      compatRulesBuiltIn: "\u5167\u5EFA\u898F\u5247",
+      compatRulesRemote: "\u9060\u7AEF\u898F\u5247",
+      compatRulesActive: "\u76EE\u524D\u898F\u5247",
+      compatRulesLastSync: "\u4E0A\u6B21\u540C\u6B65",
+      compatRulesNeverSynced: "\u5F9E\u672A\u540C\u6B65",
+      compatRulesSync: "\u540C\u6B65",
+      compatRulesSyncing: "\u540C\u6B65\u4E2D",
+      compatRulesSynced: "\u5DF2\u540C\u6B65",
+      compatRulesSyncFailed: "\u540C\u6B65\u5931\u6557",
+      compatRulesReset: "\u6062\u5FA9\u5167\u5EFA",
+      compatRulesCount: "\u689D\u898F\u5247",
+      compatRulesNote: "\u9060\u7AEF\u76F8\u5BB9\u898F\u5247\u9810\u8A2D\u95DC\u9589\uFF0C\u53EA\u4E0B\u8F09 JSON \u8A2D\u5B9A\uFF0C\u4E0D\u4E0B\u8F09\u6216\u57F7\u884C\u9060\u7AEF\u7A0B\u5F0F\u78BC\u3002"
     },
     en: {
       appName: "GPT Chat Navigator",
@@ -7657,11 +7712,15 @@
       contentWidth: "Content width",
       officialWidthReset: "Official width",
       autoCollapse: "Collapse on outside click",
+      navigateAnimation: "Jump animation",
+      scrollToTop: "Back to chat top",
+      scrollToBottom: "Back to chat bottom",
       resetDisplay: "Reset",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "No conversation nodes found yet.",
       noNodeMatches: "No matching conversation nodes.",
       nodesIndexed: "nodes indexed locally",
+      nodeUnmounted: "Not loaded; scroll nearby to re-anchor",
       extensionCache: "extension cache",
       pageCache: "page cache",
       memoryOnly: "memory only",
@@ -7670,7 +7729,7 @@
       popupSubtitle: "Local navigator for ChatGPT pages only.",
       pages: "Pages",
       nodes: "Nodes",
-      privacy: "Data stays local. Model catalog sync may fetch OpenAI documentation and the project model catalog, but chat content is not uploaded or transmitted.",
+      privacy: "Data stays local. Model catalog and compatibility rule sync only download public metadata; chat content is not uploaded or transmitted.",
       cacheLocation: "Cache location",
       saving: "Saving",
       storageTarget: "Storage target",
@@ -7710,7 +7769,25 @@
       tokenTableShare: "Tables",
       tokenHeat: "Heat",
       tokenNoData: "Waiting for conversation",
-      estimatedOnly: "Estimated from visible page content only"
+      estimatedOnly: "Estimated from visible page content only",
+      tokenVisibleDomOnly: "Counts visible page DOM only; hidden system prompts, server memory, and uploaded file source text are not included.",
+      adapterStatusOk: "OK",
+      adapterStatusDegraded: "Degraded",
+      adapterStatusUnsupported: "Unsupported",
+      compatRules: "Compatibility",
+      compatRulesSource: "Source",
+      compatRulesBuiltIn: "Built-in",
+      compatRulesRemote: "Remote",
+      compatRulesActive: "Active rule",
+      compatRulesLastSync: "Last sync",
+      compatRulesNeverSynced: "Never synced",
+      compatRulesSync: "Sync",
+      compatRulesSyncing: "Syncing",
+      compatRulesSynced: "Synced",
+      compatRulesSyncFailed: "Sync failed",
+      compatRulesReset: "Built-in",
+      compatRulesCount: "rules",
+      compatRulesNote: "Remote compatibility rules are off by default. They download JSON configuration only, never remote code."
     }
   };
   function getTranslation(language) {
@@ -7719,16 +7796,62 @@
 
   // src/popup.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-  function readAllRecords(namespace) {
+  function sortRecordEntries(records) {
+    return records.filter((entry) => typeof entry.key === "string" && Array.isArray(entry.record?.nodes)).sort((a, b) => (b.record.updatedAt || 0) - (a.record.updatedAt || 0));
+  }
+  function readChromeRecords(namespace) {
     return new Promise((resolve) => {
       chrome.storage.local.get(null, (result) => {
         const records = Object.entries(result).filter(([key]) => isNavigatorRecordKey(key, namespace)).map(([key, value]) => ({
           key,
           record: value
-        })).filter((entry) => Array.isArray(entry.record.nodes)).sort((a, b) => b.record.updatedAt - a.record.updatedAt);
-        resolve(records);
+        }));
+        resolve(sortRecordEntries(records));
       });
     });
+  }
+  function queryActiveTabId() {
+    return new Promise((resolve) => {
+      if (!chrome.tabs?.query) {
+        resolve(void 0);
+        return;
+      }
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        resolve(tabs[0]?.id);
+      });
+    });
+  }
+  async function sendPageCacheMessage(type, namespace) {
+    const tabId = await queryActiveTabId();
+    if (typeof tabId !== "number") {
+      return void 0;
+    }
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, { type, namespace }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(void 0);
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+  async function readPageRecords(namespace) {
+    const response = await sendPageCacheMessage(PAGE_CACHE_LIST_MESSAGE, namespace);
+    return response?.ok && Array.isArray(response.records) ? sortRecordEntries(response.records) : [];
+  }
+  async function readRecords(settings) {
+    if (settings.cacheMode === "off") {
+      return [];
+    }
+    return settings.cacheMode === "page" ? readPageRecords(settings.cacheNamespace) : readChromeRecords(settings.cacheNamespace);
+  }
+  async function clearRecords(settings, records) {
+    if (settings.cacheMode === "page") {
+      await sendPageCacheMessage(PAGE_CACHE_CLEAR_MESSAGE, settings.cacheNamespace);
+      return;
+    }
+    await removeStoredRecords(records.map((entry) => entry.key));
   }
   function readSettings() {
     return new Promise((resolve) => {
@@ -7757,7 +7880,7 @@
       async function load() {
         const nextSettings = await readSettings();
         setSettings(nextSettings);
-        setRecords(await readAllRecords(nextSettings.cacheNamespace));
+        setRecords(await readRecords(nextSettings));
       }
       load();
     }, []);
@@ -7768,8 +7891,8 @@
     const activeRecordPrefix = `${settings.cacheNamespace}:page:`;
     const handleClear = async () => {
       setIsClearing(true);
-      await removeStoredRecords(records.map((entry) => entry.key));
-      setRecords([]);
+      await clearRecords(settings, records);
+      setRecords(await readRecords(settings));
       setIsClearing(false);
     };
     const updateSettings = async (patch) => {
@@ -7777,7 +7900,7 @@
       const nextSettings = normalizeSettings({ ...settings, ...patch });
       setSettings(nextSettings);
       await writeSettings(nextSettings);
-      setRecords(await readAllRecords(nextSettings.cacheNamespace));
+      setRecords(await readRecords(nextSettings));
       setIsSaving(false);
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("main", { className: "popup-shell", children: [

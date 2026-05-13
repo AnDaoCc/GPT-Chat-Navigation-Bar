@@ -7451,6 +7451,20 @@
     return Component;
   };
 
+  // node_modules/lucide-react/dist/esm/icons/arrow-down-to-line.js
+  var ArrowDownToLine = createLucideIcon("ArrowDownToLine", [
+    ["path", { d: "M12 17V3", key: "1cwfxf" }],
+    ["path", { d: "m6 11 6 6 6-6", key: "12ii2o" }],
+    ["path", { d: "M19 21H5", key: "150jfl" }]
+  ]);
+
+  // node_modules/lucide-react/dist/esm/icons/arrow-up-to-line.js
+  var ArrowUpToLine = createLucideIcon("ArrowUpToLine", [
+    ["path", { d: "M5 3h14", key: "7usisc" }],
+    ["path", { d: "m18 13-6-6-6 6", key: "1kf1n9" }],
+    ["path", { d: "M12 7v14", key: "1akyts" }]
+  ]);
+
   // node_modules/lucide-react/dist/esm/icons/chart-column.js
   var ChartColumn = createLucideIcon("ChartColumn", [
     ["path", { d: "M3 3v16a2 2 0 0 0 2 2h16", key: "c24i48" }],
@@ -7712,6 +7726,8 @@
   var DEFAULT_CACHE_NAMESPACE = "conversationNavigator";
   var STORAGE_RECORD_PREFIX = `${DEFAULT_CACHE_NAMESPACE}:page:`;
   var STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
+  var PAGE_CACHE_LIST_MESSAGE = "conversationNavigator:pageCache:list";
+  var PAGE_CACHE_CLEAR_MESSAGE = "conversationNavigator:pageCache:clear";
   var DEFAULT_SETTINGS = {
     collapsed: false,
     cacheMode: "chrome",
@@ -7733,7 +7749,11 @@
     tokenModelId: "chatgpt-auto",
     manualTokenBudget: 128e3,
     tokenHudX: 0,
-    tokenHudY: 0
+    tokenHudY: 0,
+    compatRulesRemoteEnabled: false,
+    compatRulesLastSyncAt: 0,
+    compatRulesSource: "built-in",
+    navigateAnimationEnabled: true
   };
   function clampNumber(value, min, max, fallback) {
     const number = typeof value === "number" ? value : Number(value);
@@ -7751,6 +7771,7 @@
     const language = value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
     const tokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
     const tokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
+    const compatRulesSource = value?.compatRulesSource === "remote" ? "remote" : "built-in";
     const isCurrentLayout = value?.chatLayoutVersion === 2;
     return {
       collapsed: Boolean(value?.collapsed),
@@ -7773,11 +7794,21 @@
       tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim() ? value.tokenModelId.trim().slice(0, 80) : "chatgpt-auto",
       manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8e3, 2e6, 128e3)),
       tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 1e4, 0)),
-      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0))
+      tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 1e4, 0)),
+      compatRulesRemoteEnabled: Boolean(value?.compatRulesRemoteEnabled),
+      compatRulesLastSyncAt: Math.round(clampNumber(value?.compatRulesLastSyncAt, 0, Number.MAX_SAFE_INTEGER, 0)),
+      compatRulesSource: value?.compatRulesRemoteEnabled ? compatRulesSource : "built-in",
+      navigateAnimationEnabled: value?.navigateAnimationEnabled !== false
     };
   }
   function makeRecordKey(namespace, pageId) {
     return `${sanitizeCacheNamespace(namespace)}:page:${pageId}`;
+  }
+  function isNavigatorRecordKey(key, namespace) {
+    if (namespace) {
+      return key.startsWith(`${sanitizeCacheNamespace(namespace)}:page:`);
+    }
+    return /^[a-zA-Z0-9:_-]+:page:/.test(key);
   }
 
   // src/i18n.ts
@@ -7807,11 +7838,15 @@
       contentWidth: "\u6B63\u6587\u5BBD\u5EA6",
       officialWidthReset: "\u6062\u590D\u5B98\u65B9\u9ED1\u8FB9",
       autoCollapse: "\u70B9\u51FB\u5916\u90E8\u81EA\u52A8\u6536\u8D77",
+      navigateAnimation: "\u5B9A\u4F4D\u52A8\u753B",
+      scrollToTop: "\u56DE\u5230\u804A\u5929\u9876\u90E8",
+      scrollToBottom: "\u56DE\u5230\u804A\u5929\u5E95\u90E8",
       resetDisplay: "\u91CD\u7F6E",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "\u8FD8\u6CA1\u6709\u8BC6\u522B\u5230\u5F53\u524D\u5BF9\u8BDD\u8282\u70B9\u3002",
       noNodeMatches: "\u6CA1\u6709\u5339\u914D\u7684\u5BF9\u8BDD\u8282\u70B9\u3002",
       nodesIndexed: "\u4E2A\u8282\u70B9\u5DF2\u672C\u5730\u7D22\u5F15",
+      nodeUnmounted: "\u6682\u672A\u52A0\u8F7D\uFF0C\u6EDA\u52A8\u5230\u9644\u8FD1\u540E\u53EF\u5B9A\u4F4D",
       extensionCache: "\u6269\u5C55\u7F13\u5B58",
       pageCache: "\u9875\u9762\u7F13\u5B58",
       memoryOnly: "\u4EC5\u5185\u5B58",
@@ -7820,7 +7855,7 @@
       popupSubtitle: "\u4EC5\u4F5C\u7528\u4E8E ChatGPT \u9875\u9762\u7684\u672C\u5730\u5BFC\u822A\u5DE5\u5177\u3002",
       pages: "\u9875\u9762",
       nodes: "\u8282\u70B9",
-      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u6A21\u578B\u76EE\u5F55\u540C\u6B65\u4F1A\u8BBF\u95EE OpenAI \u5B98\u7F51\u6587\u6863\u548C\u9879\u76EE\u6A21\u578B\u6E05\u5355\uFF0C\u4F46\u4E0D\u4F1A\u4E0A\u4F20\u6216\u4F20\u8F93\u804A\u5929\u5185\u5BB9\u3002",
+      privacy: "\u6570\u636E\u53EA\u4FDD\u5B58\u5728\u672C\u5730\u3002\u6A21\u578B\u76EE\u5F55\u548C\u517C\u5BB9\u89C4\u5219\u540C\u6B65\u53EA\u4E0B\u8F7D\u516C\u5F00\u5143\u6570\u636E\uFF0C\u4E0D\u4F1A\u4E0A\u4F20\u6216\u4F20\u8F93\u804A\u5929\u5185\u5BB9\u3002",
       cacheLocation: "\u7F13\u5B58\u4F4D\u7F6E",
       saving: "\u4FDD\u5B58\u4E2D",
       storageTarget: "\u5B58\u50A8\u76EE\u6807",
@@ -7860,7 +7895,25 @@
       tokenTableShare: "\u8868\u683C",
       tokenHeat: "\u70ED\u533A",
       tokenNoData: "\u7B49\u5F85\u5BF9\u8BDD\u5185\u5BB9",
-      estimatedOnly: "\u4EC5\u57FA\u4E8E\u9875\u9762\u53EF\u89C1\u5185\u5BB9\u4F30\u7B97"
+      estimatedOnly: "\u4EC5\u57FA\u4E8E\u9875\u9762\u53EF\u89C1\u5185\u5BB9\u4F30\u7B97",
+      tokenVisibleDomOnly: "\u4EC5\u7EDF\u8BA1\u9875\u9762\u53EF\u89C1 DOM \u5185\u5BB9\uFF1B\u4E0D\u5305\u542B\u9690\u85CF\u7CFB\u7EDF Prompt\u3001\u670D\u52A1\u7AEF Memory \u6216\u4E0A\u4F20\u6587\u4EF6\u539F\u6587\u3002",
+      adapterStatusOk: "\u6B63\u5E38",
+      adapterStatusDegraded: "\u90E8\u5206\u964D\u7EA7",
+      adapterStatusUnsupported: "\u672A\u8BC6\u522B\u9875\u9762",
+      compatRules: "\u517C\u5BB9\u89C4\u5219",
+      compatRulesSource: "\u89C4\u5219\u6765\u6E90",
+      compatRulesBuiltIn: "\u5185\u7F6E\u89C4\u5219",
+      compatRulesRemote: "\u8FDC\u7A0B\u89C4\u5219",
+      compatRulesActive: "\u5F53\u524D\u89C4\u5219",
+      compatRulesLastSync: "\u4E0A\u6B21\u540C\u6B65",
+      compatRulesNeverSynced: "\u4ECE\u672A\u540C\u6B65",
+      compatRulesSync: "\u540C\u6B65",
+      compatRulesSyncing: "\u540C\u6B65\u4E2D",
+      compatRulesSynced: "\u5DF2\u540C\u6B65",
+      compatRulesSyncFailed: "\u540C\u6B65\u5931\u8D25",
+      compatRulesReset: "\u6062\u590D\u5185\u7F6E",
+      compatRulesCount: "\u6761\u89C4\u5219",
+      compatRulesNote: "\u8FDC\u7A0B\u517C\u5BB9\u89C4\u5219\u9ED8\u8BA4\u5173\u95ED\uFF0C\u53EA\u4E0B\u8F7D JSON \u914D\u7F6E\uFF0C\u4E0D\u4E0B\u8F7D\u6216\u6267\u884C\u8FDC\u7A0B\u4EE3\u7801\u3002"
     },
     "zh-TW": {
       appName: "GPT\u804A\u5929\u5C0E\u822A\u5668",
@@ -7882,11 +7935,15 @@
       contentWidth: "\u6B63\u6587\u5BEC\u5EA6",
       officialWidthReset: "\u6062\u5FA9\u5B98\u65B9\u9ED1\u908A",
       autoCollapse: "\u9EDE\u64CA\u5916\u90E8\u81EA\u52D5\u6536\u5408",
+      navigateAnimation: "\u5B9A\u4F4D\u52D5\u756B",
+      scrollToTop: "\u56DE\u5230\u804A\u5929\u9802\u90E8",
+      scrollToBottom: "\u56DE\u5230\u804A\u5929\u5E95\u90E8",
       resetDisplay: "\u91CD\u8A2D",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "\u5C1A\u672A\u8B58\u5225\u5230\u76EE\u524D\u5C0D\u8A71\u7BC0\u9EDE\u3002",
       noNodeMatches: "\u6C92\u6709\u7B26\u5408\u7684\u5C0D\u8A71\u7BC0\u9EDE\u3002",
       nodesIndexed: "\u500B\u7BC0\u9EDE\u5DF2\u672C\u6A5F\u7D22\u5F15",
+      nodeUnmounted: "\u66AB\u672A\u8F09\u5165\uFF0C\u6372\u52D5\u5230\u9644\u8FD1\u5F8C\u53EF\u5B9A\u4F4D",
       extensionCache: "\u64F4\u5145\u529F\u80FD\u5FEB\u53D6",
       pageCache: "\u9801\u9762\u5FEB\u53D6",
       memoryOnly: "\u50C5\u8A18\u61B6\u9AD4",
@@ -7895,7 +7952,7 @@
       popupSubtitle: "\u53EA\u4F5C\u7528\u65BC ChatGPT \u9801\u9762\u7684\u672C\u6A5F\u5C0E\u89BD\u5DE5\u5177\u3002",
       pages: "\u9801\u9762",
       nodes: "\u7BC0\u9EDE",
-      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u6A21\u578B\u76EE\u9304\u540C\u6B65\u6703\u5B58\u53D6 OpenAI \u5B98\u65B9\u6587\u4EF6\u548C\u5C08\u6848\u6A21\u578B\u6E05\u55AE\uFF0C\u4F46\u4E0D\u6703\u4E0A\u50B3\u6216\u50B3\u8F38\u804A\u5929\u5167\u5BB9\u3002",
+      privacy: "\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u672C\u6A5F\u3002\u6A21\u578B\u76EE\u9304\u548C\u76F8\u5BB9\u898F\u5247\u540C\u6B65\u53EA\u4E0B\u8F09\u516C\u958B\u4E2D\u7E7C\u8CC7\u6599\uFF0C\u4E0D\u6703\u4E0A\u50B3\u6216\u50B3\u8F38\u804A\u5929\u5167\u5BB9\u3002",
       cacheLocation: "\u5FEB\u53D6\u4F4D\u7F6E",
       saving: "\u5132\u5B58\u4E2D",
       storageTarget: "\u5132\u5B58\u76EE\u6A19",
@@ -7935,7 +7992,25 @@
       tokenTableShare: "\u8868\u683C",
       tokenHeat: "\u71B1\u5340",
       tokenNoData: "\u7B49\u5F85\u5C0D\u8A71\u5167\u5BB9",
-      estimatedOnly: "\u50C5\u4F9D\u9801\u9762\u53EF\u898B\u5167\u5BB9\u4F30\u7B97"
+      estimatedOnly: "\u50C5\u4F9D\u9801\u9762\u53EF\u898B\u5167\u5BB9\u4F30\u7B97",
+      tokenVisibleDomOnly: "\u50C5\u7D71\u8A08\u9801\u9762\u53EF\u898B DOM \u5167\u5BB9\uFF1B\u4E0D\u5305\u542B\u96B1\u85CF\u7CFB\u7D71 Prompt\u3001\u670D\u52D9\u7AEF Memory \u6216\u4E0A\u50B3\u6587\u4EF6\u539F\u6587\u3002",
+      adapterStatusOk: "\u6B63\u5E38",
+      adapterStatusDegraded: "\u90E8\u5206\u964D\u7D1A",
+      adapterStatusUnsupported: "\u672A\u8B58\u5225\u9801\u9762",
+      compatRules: "\u76F8\u5BB9\u898F\u5247",
+      compatRulesSource: "\u898F\u5247\u4F86\u6E90",
+      compatRulesBuiltIn: "\u5167\u5EFA\u898F\u5247",
+      compatRulesRemote: "\u9060\u7AEF\u898F\u5247",
+      compatRulesActive: "\u76EE\u524D\u898F\u5247",
+      compatRulesLastSync: "\u4E0A\u6B21\u540C\u6B65",
+      compatRulesNeverSynced: "\u5F9E\u672A\u540C\u6B65",
+      compatRulesSync: "\u540C\u6B65",
+      compatRulesSyncing: "\u540C\u6B65\u4E2D",
+      compatRulesSynced: "\u5DF2\u540C\u6B65",
+      compatRulesSyncFailed: "\u540C\u6B65\u5931\u6557",
+      compatRulesReset: "\u6062\u5FA9\u5167\u5EFA",
+      compatRulesCount: "\u689D\u898F\u5247",
+      compatRulesNote: "\u9060\u7AEF\u76F8\u5BB9\u898F\u5247\u9810\u8A2D\u95DC\u9589\uFF0C\u53EA\u4E0B\u8F09 JSON \u8A2D\u5B9A\uFF0C\u4E0D\u4E0B\u8F09\u6216\u57F7\u884C\u9060\u7AEF\u7A0B\u5F0F\u78BC\u3002"
     },
     en: {
       appName: "GPT Chat Navigator",
@@ -7957,11 +8032,15 @@
       contentWidth: "Content width",
       officialWidthReset: "Official width",
       autoCollapse: "Collapse on outside click",
+      navigateAnimation: "Jump animation",
+      scrollToTop: "Back to chat top",
+      scrollToBottom: "Back to chat bottom",
       resetDisplay: "Reset",
       watermark: "B\u7AD9\u5B89\u5C9BCc\u5F00\u53D1",
       noNodes: "No conversation nodes found yet.",
       noNodeMatches: "No matching conversation nodes.",
       nodesIndexed: "nodes indexed locally",
+      nodeUnmounted: "Not loaded; scroll nearby to re-anchor",
       extensionCache: "extension cache",
       pageCache: "page cache",
       memoryOnly: "memory only",
@@ -7970,7 +8049,7 @@
       popupSubtitle: "Local navigator for ChatGPT pages only.",
       pages: "Pages",
       nodes: "Nodes",
-      privacy: "Data stays local. Model catalog sync may fetch OpenAI documentation and the project model catalog, but chat content is not uploaded or transmitted.",
+      privacy: "Data stays local. Model catalog and compatibility rule sync only download public metadata; chat content is not uploaded or transmitted.",
       cacheLocation: "Cache location",
       saving: "Saving",
       storageTarget: "Storage target",
@@ -8010,18 +8089,816 @@
       tokenTableShare: "Tables",
       tokenHeat: "Heat",
       tokenNoData: "Waiting for conversation",
-      estimatedOnly: "Estimated from visible page content only"
+      estimatedOnly: "Estimated from visible page content only",
+      tokenVisibleDomOnly: "Counts visible page DOM only; hidden system prompts, server memory, and uploaded file source text are not included.",
+      adapterStatusOk: "OK",
+      adapterStatusDegraded: "Degraded",
+      adapterStatusUnsupported: "Unsupported",
+      compatRules: "Compatibility",
+      compatRulesSource: "Source",
+      compatRulesBuiltIn: "Built-in",
+      compatRulesRemote: "Remote",
+      compatRulesActive: "Active rule",
+      compatRulesLastSync: "Last sync",
+      compatRulesNeverSynced: "Never synced",
+      compatRulesSync: "Sync",
+      compatRulesSyncing: "Syncing",
+      compatRulesSynced: "Synced",
+      compatRulesSyncFailed: "Sync failed",
+      compatRulesReset: "Built-in",
+      compatRulesCount: "rules",
+      compatRulesNote: "Remote compatibility rules are off by default. They download JSON configuration only, never remote code."
     }
   };
   function getTranslation(language) {
     return translations[language] ?? translations["zh-CN"];
   }
 
+  // src/chatGptAdapter.ts
+  var ROOT_ID = "conversation-navigator-root";
+  var CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chat.openai.com", "chatgpt.com"]);
+  var SUPPLEMENTAL_CONTEXT_LIMIT = 8;
+  var SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
+  var SUPPLEMENTAL_TEXT_LIMIT = 6e4;
+  var CHATGPT_COMPAT_RULES_URL = "https://raw.githubusercontent.com/AnDaoCc/GPT-Chat-Navigation-Bar/main/compat/chatgpt-dom-rules.json";
+  var DEFAULT_TEXT_CONTROL_SELECTORS = [
+    "button",
+    '[role="button"]',
+    '[role="menuitem"]',
+    "select",
+    "textarea",
+    "input",
+    "option"
+  ];
+  var DEFAULT_TEXT_IGNORED_SELECTORS = [
+    "script",
+    "style",
+    "noscript",
+    "svg",
+    "menu",
+    '[role="menu"]',
+    '[role="toolbar"]',
+    "[hidden]",
+    '[aria-hidden="true"]',
+    '[data-testid*="copy" i]',
+    '[data-testid*="clipboard" i]',
+    '[data-testid*="action" i]',
+    '[data-testid*="toolbar" i]',
+    '[class*="copy" i]',
+    '[class*="toolbar" i]'
+  ];
+  var CURRENT_CHATGPT_RULE = {
+    id: "chatgpt-current-2026",
+    label: "ChatGPT current DOM",
+    priority: 100,
+    source: "built-in",
+    messageSelectors: [
+      '[data-message-author-role="user"]',
+      '[data-message-author-role="assistant"]'
+    ],
+    turnSelectors: [
+      'article[data-testid^="conversation-turn"]',
+      '[data-testid^="conversation-turn"]'
+    ],
+    modelSelectors: [
+      '[data-testid*="model" i]',
+      '[aria-label*="model" i]',
+      '[aria-label*="GPT" i]',
+      "main form button",
+      "form button",
+      "header button",
+      "button",
+      '[role="button"]'
+    ],
+    supplementalSelectors: [
+      '[data-testid*="canvas" i]',
+      '[data-testid*="artifact" i]',
+      '[data-testid*="document" i]',
+      '[data-testid*="attachment" i]',
+      '[data-testid*="file" i]',
+      '[data-testid*="image" i]',
+      '[data-testid*="media" i]',
+      '[data-testid*="picture" i]',
+      '[aria-label*="canvas" i]',
+      '[aria-label*="artifact" i]',
+      '[aria-label*="document" i]',
+      '[aria-label*="attachment" i]',
+      '[aria-label*="file" i]',
+      '[aria-label*="image" i]',
+      '[aria-label*="picture" i]',
+      '[aria-label*="\u753B\u5E03" i]',
+      '[aria-label*="\u6587\u6863" i]',
+      '[aria-label*="\u9644\u4EF6" i]',
+      '[aria-label*="\u6587\u4EF6" i]',
+      '[aria-label*="\u56FE\u7247" i]',
+      '[aria-label*="\u5716\u7247" i]',
+      '[class*="canvas" i]',
+      '[class*="artifact" i]',
+      '[class*="document" i]',
+      '[class*="attachment" i]',
+      '[class*="generated-image" i]',
+      '[class*="image" i]',
+      '[class*="textLayer" i]',
+      ".ProseMirror",
+      ".cm-content",
+      ".monaco-editor",
+      '[contenteditable="true"]',
+      "[data-page-number]"
+    ],
+    supplementalExcludeSelectors: [
+      `#${ROOT_ID}`,
+      'article[data-testid^="conversation-turn"]',
+      '[data-testid^="conversation-turn"]',
+      "[data-message-author-role]",
+      '[data-testid*="composer" i]',
+      '[aria-label*="composer" i]',
+      '[aria-label*="\u8F93\u5165" i]',
+      '[aria-label*="\u767C\u9001\u8A0A\u606F" i]',
+      '[aria-label*="\u53D1\u9001\u6D88\u606F" i]',
+      "form"
+    ],
+    textControlSelectors: DEFAULT_TEXT_CONTROL_SELECTORS,
+    textIgnoredSelectors: DEFAULT_TEXT_IGNORED_SELECTORS,
+    userHints: ["user", "human", "prompt", "query", "request"],
+    assistantHints: ["assistant", "model", "response", "answer", "chatgpt"],
+    fallbackRoleByOrder: true
+  };
+  var GENERIC_CHATGPT_RULE = {
+    ...CURRENT_CHATGPT_RULE,
+    id: "chatgpt-generic-visible-text",
+    label: "Generic visible text fallback",
+    priority: 10,
+    messageSelectors: [],
+    turnSelectors: [
+      "main article",
+      "main [role='article']",
+      'main [data-testid*="turn" i]',
+      'main [data-testid*="conversation" i]',
+      'main [class*="message" i]'
+    ],
+    fallbackRoleByOrder: true
+  };
+  var BUILT_IN_CHATGPT_RULES = [
+    CURRENT_CHATGPT_RULE,
+    GENERIC_CHATGPT_RULE
+  ];
+  function createDefaultAdapterHealth(reason = "Waiting for ChatGPT page structure.") {
+    return {
+      status: "unsupported",
+      reason,
+      ruleId: "none",
+      messageCount: 0,
+      userCount: 0,
+      assistantCount: 0,
+      canAnchor: false,
+      tokenTextAvailable: false,
+      source: "built-in"
+    };
+  }
+  function normalizeCompatRulesPayload(value) {
+    if (!value || typeof value !== "object") {
+      return [];
+    }
+    const payload = value;
+    if (payload.schemaVersion !== 1 || !Array.isArray(payload.rules)) {
+      return [];
+    }
+    return payload.rules.map((rule, index) => normalizeRemoteRule(rule, index)).filter((rule) => Boolean(rule));
+  }
+  function createChatGptAdapter(remoteRules = []) {
+    const rules = getOrderedRules(remoteRules);
+    return {
+      id: "chatgpt",
+      label: "ChatGPT",
+      matches: (host) => CHATGPT_HOSTS.has(host),
+      collect: () => collectWithRules(rules),
+      detectModelLabel: () => detectModelLabelWithRules(rules)
+    };
+  }
+  function normalizeRemoteRule(rule, index) {
+    const id = sanitizeRuleId(rule.id) || `remote-rule-${index + 1}`;
+    const messageSelectors = sanitizeSelectors(rule.messageSelectors);
+    const turnSelectors = sanitizeSelectors(rule.turnSelectors);
+    if (messageSelectors.length === 0 && turnSelectors.length === 0) {
+      return null;
+    }
+    return {
+      id,
+      label: typeof rule.label === "string" && rule.label.trim() ? rule.label.trim().slice(0, 80) : id,
+      priority: clampNumber2(rule.priority, 20, 200, 120),
+      source: "remote",
+      messageSelectors: messageSelectors.length ? messageSelectors : CURRENT_CHATGPT_RULE.messageSelectors,
+      turnSelectors: turnSelectors.length ? turnSelectors : CURRENT_CHATGPT_RULE.turnSelectors,
+      modelSelectors: sanitizeSelectors(rule.modelSelectors, CURRENT_CHATGPT_RULE.modelSelectors),
+      supplementalSelectors: sanitizeSelectors(rule.supplementalSelectors, CURRENT_CHATGPT_RULE.supplementalSelectors),
+      supplementalExcludeSelectors: sanitizeSelectors(
+        rule.supplementalExcludeSelectors,
+        CURRENT_CHATGPT_RULE.supplementalExcludeSelectors
+      ),
+      textControlSelectors: sanitizeSelectors(rule.textControlSelectors, DEFAULT_TEXT_CONTROL_SELECTORS),
+      textIgnoredSelectors: sanitizeSelectors(rule.textIgnoredSelectors, DEFAULT_TEXT_IGNORED_SELECTORS),
+      userHints: sanitizeHints(rule.userHints, CURRENT_CHATGPT_RULE.userHints),
+      assistantHints: sanitizeHints(rule.assistantHints, CURRENT_CHATGPT_RULE.assistantHints),
+      fallbackRoleByOrder: Boolean(rule.fallbackRoleByOrder)
+    };
+  }
+  function getOrderedRules(remoteRules) {
+    return [...remoteRules, ...BUILT_IN_CHATGPT_RULES].map((rule) => ({ ...rule })).sort((a, b) => b.priority - a.priority);
+  }
+  function collectWithRules(rules) {
+    let best = null;
+    const results = [];
+    for (const rule of rules) {
+      const result = collectMessagesByRule(rule);
+      if (result.messages.length === 0) {
+        continue;
+      }
+      results.push(result);
+      if (!best || getCollectScore(result) > getCollectScore(best)) {
+        best = result;
+      }
+    }
+    if (!best) {
+      return {
+        messages: [],
+        supplementalContexts: [],
+        health: createDefaultAdapterHealth("No visible ChatGPT conversation messages were recognized.")
+      };
+    }
+    const merged = mergeCollectResults(best, results);
+    const supplementalContexts = safeCollectSupplementalContexts(createSupplementalRule(best.rule, rules));
+    const health = createHealth(merged, supplementalContexts);
+    return {
+      messages: merged.messages,
+      supplementalContexts,
+      health
+    };
+  }
+  function createSupplementalRule(base, rules) {
+    return {
+      ...base,
+      supplementalSelectors: uniqueStrings(rules.flatMap((rule) => rule.supplementalSelectors)),
+      supplementalExcludeSelectors: uniqueStrings(rules.flatMap((rule) => rule.supplementalExcludeSelectors)),
+      textControlSelectors: uniqueStrings(rules.flatMap((rule) => rule.textControlSelectors)),
+      textIgnoredSelectors: uniqueStrings(rules.flatMap((rule) => rule.textIgnoredSelectors))
+    };
+  }
+  function collectMessagesByRule(rule) {
+    const messages = [];
+    const usedRoots = /* @__PURE__ */ new Set();
+    let usedFallbackRoles = false;
+    for (const selector of rule.messageSelectors) {
+      for (const roleNode of safeQueryAll(selector)) {
+        const role = inferRole(roleNode, rule);
+        if (!role) {
+          continue;
+        }
+        const root = getMessageRoot(roleNode, rule);
+        const text = extractVisibleText(roleNode, rule) || extractVisibleText(root, rule) || inferNonTextMessageLabel(roleNode) || inferNonTextMessageLabel(root);
+        if (text) {
+          messages.push({ role, element: role === "user" ? root : roleNode, text });
+          usedRoots.add(root);
+        }
+      }
+    }
+    for (const selector of rule.turnSelectors) {
+      const articles = sortElementsByDomOrder(uniqueElements(safeQueryAll(selector)));
+      for (let index = 0; index < articles.length; index += 1) {
+        const article = articles[index];
+        if (usedRoots.has(article) || article.closest(`#${ROOT_ID}`)) {
+          continue;
+        }
+        const inferredRole = inferRole(article, rule);
+        const fallbackRole = rule.fallbackRoleByOrder && !inferredRole && isLikelyFallbackTurnCandidate(article) ? inferFallbackRole(article, index) : null;
+        const role = inferredRole ?? fallbackRole;
+        const text = extractVisibleText(article, rule) || (role ? inferNonTextMessageLabel(article) : "");
+        if (role && text && text.length >= 2) {
+          messages.push({ role, element: article, text });
+          usedRoots.add(article);
+          if (fallbackRole) {
+            usedFallbackRoles = true;
+          }
+        }
+      }
+    }
+    const compacted = compactMessages(messages);
+    return {
+      rule,
+      messages: compacted,
+      userCount: compacted.filter((message) => message.role === "user").length,
+      assistantCount: compacted.filter((message) => message.role === "assistant").length,
+      usedFallbackRoles
+    };
+  }
+  function mergeCollectResults(base, results) {
+    const messages = [...base.messages];
+    let usedFallbackRoles = base.usedFallbackRoles;
+    for (const result of results) {
+      for (const message of result.messages) {
+        if (messages.some((existing) => isDuplicateMessage(existing, message))) {
+          continue;
+        }
+        if (hasConflictingNestedRole(message, messages)) {
+          continue;
+        }
+        const overlapsExisting = messages.some((existing) => isNestedElement(existing.element, message.element));
+        if (result.rule === base.rule || isVisualMessage(message) || !overlapsExisting && hasExplicitRoleMarker(message.element)) {
+          messages.push(message);
+          usedFallbackRoles = usedFallbackRoles || result.usedFallbackRoles;
+        }
+      }
+    }
+    const compacted = compactMessages(messages);
+    return {
+      ...base,
+      messages: compacted,
+      userCount: compacted.filter((message) => message.role === "user").length,
+      assistantCount: compacted.filter((message) => message.role === "assistant").length,
+      usedFallbackRoles
+    };
+  }
+  function inferRoleByTurnOrder(index) {
+    return index % 2 === 0 ? "user" : "assistant";
+  }
+  function inferFallbackRole(element, index) {
+    if (hasVisibleMedia(element) && !isLikelyUserMediaElement(element)) {
+      return "assistant";
+    }
+    return inferRoleByTurnOrder(index);
+  }
+  function isLikelyUserMediaElement(element) {
+    const descriptor = getElementDescriptor(element);
+    return /(uploaded|upload|composer|prompt|user|human|attachment|file|document|附件|上传|上傳|文件|檔案|文档)/i.test(descriptor);
+  }
+  function isLikelyFallbackTurnCandidate(element) {
+    if (element.closest(`#${ROOT_ID}`)) {
+      return false;
+    }
+    const descriptor = getElementDescriptor(element);
+    const mediaLike = /(image|img|picture|gallery|media|thumbnail|attachment|file|artifact|canvas|dall|生成图片|圖片|图片|附件|文件|檔案|画布|畫布)/i.test(descriptor);
+    const strongConversationMarker = /(conversation-turn|data-message|message-author|chat-message|\bmessage\b|\bturn\b)/i.test(descriptor);
+    if (mediaLike && !strongConversationMarker) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 220 || rect.height < 32) {
+      return false;
+    }
+    const text = normalizeText(element.innerText || "");
+    const hasMedia = hasVisibleMedia(element);
+    if (text.length < 8 && !(strongConversationMarker && hasMedia)) {
+      return false;
+    }
+    const controlCount = element.querySelectorAll("button, [role='button'], input, textarea, select").length;
+    const imageCount = element.querySelectorAll("img, picture, canvas, video, svg").length;
+    if (imageCount > 0 && !strongConversationMarker && text.length < 160) {
+      return false;
+    }
+    if (imageCount > 0 && controlCount >= 2 && text.length < 80) {
+      return false;
+    }
+    const mainArticle = element.matches("main article, main [role='article']");
+    return strongConversationMarker || mainArticle && text.length >= 20 && imageCount <= 1;
+  }
+  function inferNonTextMessageLabel(element) {
+    const descriptor = getElementDescriptor(element);
+    if (/(canvas|artifact|画布|畫布)/i.test(descriptor)) {
+      return "\u753B\u5E03\u5185\u5BB9";
+    }
+    if (/(attachment|file|document|upload|附件|文件|檔案|文档|文件)/i.test(descriptor)) {
+      return "\u9644\u4EF6\u5185\u5BB9";
+    }
+    if (hasVisibleMedia(element)) {
+      return "\u56FE\u7247\u5185\u5BB9";
+    }
+    return "";
+  }
+  function hasVisibleMedia(element) {
+    const candidates = [
+      element.matches("img, picture, canvas, video") ? element : null,
+      ...Array.from(element.querySelectorAll("img, picture, canvas, video"))
+    ].filter((candidate) => Boolean(candidate));
+    return candidates.some((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width >= 24 && rect.height >= 24;
+    });
+  }
+  function isVisualMessage(message) {
+    return hasVisibleMedia(message.element) || Boolean(inferNonTextMessageLabel(message.element));
+  }
+  function hasExplicitRoleMarker(element) {
+    return Boolean(element.closest("[data-message-author-role]") || element.querySelector("[data-message-author-role]"));
+  }
+  function isDuplicateMessage(existing, candidate) {
+    if (existing.element === candidate.element) {
+      return true;
+    }
+    if (!isNestedElement(existing.element, candidate.element)) {
+      return false;
+    }
+    if (existing.role !== candidate.role) {
+      return false;
+    }
+    return existing.text === candidate.text || existing.text.includes(candidate.text) || candidate.text.includes(existing.text) || isVisualMessage(existing) || isVisualMessage(candidate);
+  }
+  function hasConflictingNestedRole(candidate, messages) {
+    return messages.some((existing) => isNestedElement(existing.element, candidate.element) && existing.role !== candidate.role);
+  }
+  function isNestedElement(first, second) {
+    return first === second || first.contains(second) || second.contains(first);
+  }
+  function getCollectScore(result) {
+    return result.rule.priority * 4 + result.messages.length * 4 + result.userCount * 8 + result.assistantCount * 6 - (result.usedFallbackRoles ? 12 : 0);
+  }
+  function createHealth(result, supplementalContexts) {
+    const canAnchor = result.messages.every((message) => message.element instanceof HTMLElement);
+    const tokenTextAvailable = result.messages.some((message) => message.text.length > 0) || supplementalContexts.some((context) => context.text.length > 0);
+    const missingRole = result.userCount === 0 || result.assistantCount === 0;
+    const builtInFallback = result.rule.source === "built-in" && result.rule.id !== CURRENT_CHATGPT_RULE.id;
+    const degraded = result.usedFallbackRoles || missingRole || builtInFallback;
+    return {
+      status: degraded ? "degraded" : "ok",
+      reason: degraded ? getDegradedReason(result) : "ChatGPT page structure is recognized.",
+      ruleId: result.rule.id,
+      messageCount: result.messages.length,
+      userCount: result.userCount,
+      assistantCount: result.assistantCount,
+      canAnchor,
+      tokenTextAvailable,
+      source: result.rule.source
+    };
+  }
+  function getDegradedReason(result) {
+    if (result.usedFallbackRoles) {
+      return "Using generic visible-text fallback because exact ChatGPT role markers were not fully recognized.";
+    }
+    if (result.userCount === 0 || result.assistantCount === 0) {
+      return "Messages were found, but user and assistant roles were not both recognized.";
+    }
+    if (result.rule.source === "remote") {
+      return "Using remote ChatGPT compatibility rule.";
+    }
+    return "Using a fallback ChatGPT compatibility rule.";
+  }
+  function getMessageRoot(element, rule) {
+    for (const selector of rule.turnSelectors) {
+      const root = element.closest(selector);
+      if (root) {
+        return root;
+      }
+    }
+    return element;
+  }
+  function inferRole(element, rule) {
+    const explicitRole = element.getAttribute("data-message-author-role");
+    if (explicitRole === "user" || explicitRole === "assistant") {
+      return explicitRole;
+    }
+    const descriptor = getElementDescriptor(element);
+    if (rule.userHints.some((hint) => descriptor.includes(hint.toLowerCase()))) {
+      return "user";
+    }
+    if (rule.assistantHints.some((hint) => descriptor.includes(hint.toLowerCase()))) {
+      return "assistant";
+    }
+    return null;
+  }
+  function getElementDescriptor(element) {
+    return [
+      element.tagName,
+      element.id,
+      element.className,
+      element.getAttribute("aria-label"),
+      element.getAttribute("title"),
+      element.getAttribute("alt"),
+      element.getAttribute("data-testid"),
+      element.getAttribute("data-test-id"),
+      element.getAttribute("role")
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+  function compactMessages(messages) {
+    const compacted = [];
+    for (const message of sortByDomOrder(messages).map((message2) => ({
+      ...message2,
+      text: normalizeText(message2.text)
+    }))) {
+      if (!message.text || message.text.length < 2 || !document.body.contains(message.element)) {
+        continue;
+      }
+      const duplicate = compacted.some((existing) => {
+        if (existing.role !== message.role) {
+          return false;
+        }
+        if (existing.element === message.element) {
+          return true;
+        }
+        const nested = existing.element.contains(message.element) || message.element.contains(existing.element);
+        if (!nested) {
+          return false;
+        }
+        return existing.text === message.text || existing.text.includes(message.text) || message.text.includes(existing.text);
+      });
+      if (!duplicate) {
+        compacted.push(message);
+      }
+    }
+    return compacted;
+  }
+  function safeCollectSupplementalContexts(rule) {
+    try {
+      return collectSupplementalContexts(rule);
+    } catch {
+      return [];
+    }
+  }
+  function collectSupplementalContexts(rule) {
+    const contexts = [];
+    for (const selector of rule.supplementalSelectors) {
+      for (const element of safeQueryAll(selector).slice(0, SUPPLEMENTAL_CANDIDATE_LIMIT)) {
+        if (!isSupplementalContextCandidate(element, rule)) {
+          continue;
+        }
+        const text = extractVisibleText(element, rule, SUPPLEMENTAL_TEXT_LIMIT) || inferNonTextMessageLabel(element);
+        if (!text || /^(copy|copied|download|open|close|share|复制|已复制|下载|打开|关闭|分享)$/i.test(text)) {
+          continue;
+        }
+        contexts.push({
+          kind: inferSupplementalContextKind(element),
+          element,
+          text
+        });
+      }
+    }
+    return compactSupplementalContexts(contexts).slice(0, SUPPLEMENTAL_CONTEXT_LIMIT);
+  }
+  function isSupplementalContextCandidate(element, rule) {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName === "html" || tagName === "body" || tagName === "main") {
+      return false;
+    }
+    if (!isVisibleElement(element) || rule.supplementalExcludeSelectors.some((selector) => Boolean(element.closest(selector)))) {
+      return false;
+    }
+    if (!element.closest("main")) {
+      return false;
+    }
+    if (isLikelyControlOnlyElement(element)) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width >= 40 && rect.height >= 12;
+  }
+  function isLikelyContentCard(element) {
+    const descriptor = getElementDescriptor(element);
+    const contentLike = /(image|picture|media|canvas|artifact|attachment|file|document|upload|图片|圖片|画布|畫布|附件|文件|檔案|文档)/i.test(descriptor);
+    const actionOnly = /(copy|copied|download|open|close|share|menu|toolbar|action|more|复制|已复制|下载|打开|关闭|分享|更多)/i.test(descriptor);
+    if (!contentLike || actionOnly) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width >= 80 && rect.height >= 28;
+  }
+  function isLikelyControlOnlyElement(element) {
+    const descriptor = getElementDescriptor(element);
+    if (/(copy|copied|download|open|close|share|menu|toolbar|action|more|复制|已复制|下载|打开|关闭|分享|更多)/i.test(descriptor)) {
+      return true;
+    }
+    return element.matches("button, [role='button']") && !isLikelyContentCard(element);
+  }
+  function inferSupplementalContextKind(element) {
+    const descriptor = getElementDescriptor(element);
+    return /(canvas|artifact|画布|prosemirror|cm-content|monaco)/i.test(descriptor) ? "canvas" : "file";
+  }
+  function compactSupplementalContexts(contexts) {
+    const compacted = [];
+    const seenText = /* @__PURE__ */ new Set();
+    for (const context of sortByDomOrder(contexts).map((context2) => ({
+      ...context2,
+      text: normalizeText(context2.text)
+    }))) {
+      if (!context.text || context.text.length < 4 || !document.body.contains(context.element)) {
+        continue;
+      }
+      const textKey = stableHash(`${context.kind}:${context.text}`);
+      if (seenText.has(textKey)) {
+        continue;
+      }
+      let shouldAdd = true;
+      for (let index = 0; index < compacted.length; index += 1) {
+        const existing = compacted[index];
+        const nested = existing.element.contains(context.element) || context.element.contains(existing.element);
+        const overlappingText = existing.text === context.text || existing.text.includes(context.text) || context.text.includes(existing.text);
+        if (!nested && !overlappingText) {
+          continue;
+        }
+        if (context.text.length > existing.text.length && context.element.contains(existing.element)) {
+          compacted[index] = context;
+        }
+        shouldAdd = false;
+        break;
+      }
+      if (shouldAdd) {
+        compacted.push(context);
+        seenText.add(textKey);
+      }
+    }
+    return compacted;
+  }
+  function detectModelLabelWithRules(rules) {
+    let best = null;
+    const selectors = uniqueStrings(rules.flatMap((rule) => rule.modelSelectors));
+    for (const selector of selectors) {
+      for (const element of safeQueryAll(selector)) {
+        if (!isVisibleElement(element) || element.closest(`#${ROOT_ID}`)) {
+          continue;
+        }
+        const textValues = [
+          element.innerText,
+          element.getAttribute("aria-label"),
+          element.getAttribute("title")
+        ].filter(Boolean);
+        for (const rawText of textValues) {
+          const label = normalizeDetectedChatGptModelLabel(rawText);
+          if (!label) {
+            continue;
+          }
+          const rawNormalized = normalizeText(rawText);
+          const modelishAttributes = `${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`;
+          if (/^Pro$/i.test(rawNormalized) && !element.closest("form, main") && !/model|gpt/i.test(modelishAttributes)) {
+            continue;
+          }
+          const score = scoreModelCandidate(element, label, rawText);
+          if (!best || score > best.score) {
+            best = { label, score };
+          }
+        }
+      }
+    }
+    return best?.label ?? "";
+  }
+  function normalizeDetectedChatGptModelLabel(value) {
+    const text = normalizeText(value).replace(/\b(current model|selected model|model selector|选择模型|当前模型)\b/gi, " ").replace(/\s+/g, " ").trim();
+    const match = text.match(/\b(?:GPT\s*[- ]?\s*\d+(?:\.\d+)?|gpt\s*[- ]?\s*\d+(?:\.\d+)?|o\d(?:\s*[- ]?\s*mini)?)(?:\s*[- ]?\s*(?:Instant|Thinking|Pro|Mini|Nano|Chat))?\b/i);
+    if (!match?.[0]) {
+      return "";
+    }
+    return match[0].replace(/\s+/g, " ").replace(/\bgpt\b/i, "GPT").replace(/\bo(\d)/i, "o$1").replace(/\binstant\b/i, "Instant").replace(/\bthinking\b/i, "Thinking").replace(/\bpro\b/i, "Pro").replace(/\bmini\b/i, "Mini").replace(/\bnano\b/i, "Nano").replace(/\bchat\b/i, "Chat").trim();
+  }
+  function scoreModelCandidate(element, normalizedLabel, rawText) {
+    const text = normalizeText(rawText);
+    let score = 0;
+    if (/gpt|model/i.test(`${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`)) {
+      score += 18;
+    }
+    if (text.length <= 40) {
+      score += 10;
+    }
+    if (element.closest("form, main")) {
+      score += 12;
+    }
+    if (element.matches("button, [role='button']")) {
+      score += 8;
+    }
+    if (/Thinking|Pro/.test(normalizedLabel)) {
+      score += 6;
+    }
+    return score - Math.max(0, text.length - 32);
+  }
+  function extractVisibleText(element, rule, maxCharacters = Number.POSITIVE_INFINITY) {
+    const parts = [];
+    let length = 0;
+    const controlSelector = joinSelectors(rule.textControlSelectors);
+    const ignoredSelector = joinSelectors(rule.textIgnoredSelectors);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        const text = node.nodeValue?.trim();
+        if (!parent || !text || parent.closest(`#${ROOT_ID}`)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const control = parent.closest(controlSelector);
+        if (control && element.contains(control) && !isLikelyContentCard(control)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const ignoredContainer = parent.closest(ignoredSelector);
+        if (ignoredContainer && element.contains(ignoredContainer)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const style = window.getComputedStyle(parent);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    while (walker.nextNode()) {
+      const text = walker.currentNode.nodeValue;
+      if (text) {
+        const available = maxCharacters - length;
+        if (available <= 0) {
+          break;
+        }
+        const nextText = text.length > available ? text.slice(0, available) : text;
+        parts.push(nextText);
+        length += nextText.length;
+      }
+    }
+    return normalizeText(parts.join(" "));
+  }
+  function isVisibleElement(element) {
+    if (element.closest(`#${ROOT_ID}`)) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+  function safeQueryAll(selector, root = document) {
+    try {
+      return Array.from(root.querySelectorAll(selector));
+    } catch {
+      return [];
+    }
+  }
+  function sortByDomOrder(entries) {
+    return [...entries].sort((a, b) => {
+      if (a.element === b.element) {
+        return 0;
+      }
+      const position = a.element.compareDocumentPosition(b.element);
+      return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+    });
+  }
+  function sortElementsByDomOrder(elements) {
+    return [...elements].sort((a, b) => {
+      if (a === b) {
+        return 0;
+      }
+      const position = a.compareDocumentPosition(b);
+      return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+    });
+  }
+  function uniqueElements(elements) {
+    return Array.from(new Set(elements));
+  }
+  function normalizeText(value) {
+    return value.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").replace(/^(You said:|ChatGPT said:|User:|Assistant:|Model:)\s*/i, "").trim();
+  }
+  function joinSelectors(selectors) {
+    return selectors.length ? selectors.join(",") : "*";
+  }
+  function sanitizeRuleId(value) {
+    return typeof value === "string" ? value.trim().replace(/[^a-zA-Z0-9:_-]/g, "-").slice(0, 80) : "";
+  }
+  function sanitizeSelectors(value, fallback = []) {
+    if (!Array.isArray(value)) {
+      return fallback;
+    }
+    const selectors = value.filter((selector) => typeof selector === "string").map((selector) => selector.trim()).filter((selector) => selector.length > 0 && selector.length < 240).filter(isValidSelector);
+    return selectors.length ? uniqueStrings(selectors) : fallback;
+  }
+  function sanitizeHints(value, fallback) {
+    if (!Array.isArray(value)) {
+      return fallback;
+    }
+    const hints = value.filter((hint) => typeof hint === "string").map((hint) => hint.trim().toLowerCase()).filter((hint) => hint.length > 0 && hint.length < 48);
+    return hints.length ? uniqueStrings(hints) : fallback;
+  }
+  function isValidSelector(selector) {
+    try {
+      document.createDocumentFragment().querySelector(selector);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function uniqueStrings(values) {
+    return Array.from(new Set(values));
+  }
+  function clampNumber2(value, min, max, fallback) {
+    const number = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(number)) {
+      return fallback;
+    }
+    return Math.min(max, Math.max(min, number));
+  }
+  function stableHash(value) {
+    let hash = 5381;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = hash * 33 ^ value.charCodeAt(index);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
   // src/contentScript.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-  var ROOT_ID = "conversation-navigator-root";
+  var ROOT_ID2 = "conversation-navigator-root";
   var ANCHOR_ATTR = "data-conversation-navigator-id";
   var MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
+  var COMPAT_RULES_STORAGE_KEY = "conversationNavigator:compatRules:v1";
   var SCAN_DEBOUNCE_MS = 650;
   var STREAMING_SCAN_DEBOUNCE_MS = 1400;
   var IDLE_SCAN_TIMEOUT_MS = 1200;
@@ -8033,9 +8910,6 @@
   var TOKEN_CACHE_LIMIT = 900;
   var TOKENIZER_TEXT_LIMIT = 12e3;
   var TOKEN_BREAKDOWN_NODE_LIMIT = 80;
-  var SUPPLEMENTAL_CONTEXT_LIMIT = 8;
-  var SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
-  var SUPPLEMENTAL_TEXT_LIMIT = 6e4;
   var MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1e3;
   var DEFAULT_HUD_WIDTH = 246;
   var DEFAULT_HUD_GAP = 26;
@@ -8064,44 +8938,6 @@
     '[data-testid*="toolbar" i]',
     '[class*="copy" i]',
     '[class*="toolbar" i]'
-  ].join(",");
-  var SUPPLEMENTAL_CONTEXT_SELECTOR = [
-    '[data-testid*="canvas" i]',
-    '[data-testid*="artifact" i]',
-    '[data-testid*="document" i]',
-    '[data-testid*="attachment" i]',
-    '[data-testid*="file" i]',
-    '[aria-label*="canvas" i]',
-    '[aria-label*="artifact" i]',
-    '[aria-label*="document" i]',
-    '[aria-label*="attachment" i]',
-    '[aria-label*="file" i]',
-    '[aria-label*="\u753B\u5E03" i]',
-    '[aria-label*="\u6587\u6863" i]',
-    '[aria-label*="\u9644\u4EF6" i]',
-    '[aria-label*="\u6587\u4EF6" i]',
-    '[class*="canvas" i]',
-    '[class*="artifact" i]',
-    '[class*="document" i]',
-    '[class*="attachment" i]',
-    '[class*="textLayer" i]',
-    ".ProseMirror",
-    ".cm-content",
-    ".monaco-editor",
-    '[contenteditable="true"]',
-    "[data-page-number]"
-  ].join(",");
-  var SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR = [
-    `#${ROOT_ID}`,
-    'article[data-testid^="conversation-turn"]',
-    '[data-testid^="conversation-turn"]',
-    "[data-message-author-role]",
-    '[data-testid*="composer" i]',
-    '[aria-label*="composer" i]',
-    '[aria-label*="\u8F93\u5165" i]',
-    '[aria-label*="\u767C\u9001\u8A0A\u606F" i]',
-    '[aria-label*="\u53D1\u9001\u6D88\u606F" i]',
-    "form"
   ].join(",");
   var anchorRegistry = /* @__PURE__ */ new Map();
   var nodeAnchorRegistry = /* @__PURE__ */ new WeakMap();
@@ -8166,17 +9002,15 @@
   ]);
   var NON_CHATGPT_MODEL_PATTERN = /(audio|realtime|transcribe|tts|image|vision|sora|embedding|moderation|codex|computer-use|deep-research|search|davinci|babbage|whisper|dall)/i;
   var MODEL_MODE_ORDER = ["instant", "thinking", "pro", "base"];
-  var CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chat.openai.com", "chatgpt.com"]);
-  var siteAdapters = [
-    {
-      id: "chatgpt",
-      label: "ChatGPT",
-      matches: (host) => CHATGPT_HOSTS.has(host),
-      collect: collectChatGptMessages
-    }
-  ];
+  var activeCompatRules = [];
+  var activeCompatRulesSource = "built-in";
+  var navigationAnimationFrame = 0;
+  function setActiveCompatRules(rules, source) {
+    activeCompatRules = source === "remote" ? rules : [];
+    activeCompatRulesSource = source === "remote" && rules.length > 0 ? "remote" : "built-in";
+  }
   function getAdapter() {
-    return siteAdapters.find((adapter) => adapter.matches(location.hostname)) ?? siteAdapters[0];
+    return createChatGptAdapter(activeCompatRules);
   }
   function detectPageTheme() {
     if (document.documentElement.classList.contains("dark") || document.body.classList.contains("dark")) {
@@ -8240,6 +9074,34 @@
       return void 0;
     }
   }
+  function readPageStorageRecords(namespace) {
+    const records = [];
+    try {
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (!key || !isNavigatorRecordKey(key, namespace)) {
+          continue;
+        }
+        const record = readPageStorageRecord(key);
+        if (record?.schemaVersion === 1 && Array.isArray(record.nodes)) {
+          records.push({ key, record });
+        }
+      }
+    } catch {
+      return [];
+    }
+    return records.sort((a, b) => b.record.updatedAt - a.record.updatedAt);
+  }
+  function clearPageStorageRecords(namespace) {
+    const keys = readPageStorageRecords(namespace).map((entry) => entry.key);
+    for (const key of keys) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+      }
+    }
+    return keys.length;
+  }
   function writePageStorageRecord(pageKey, record) {
     try {
       window.localStorage.setItem(pageKey, JSON.stringify(record));
@@ -8249,6 +9111,22 @@
       return false;
     }
   }
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== PAGE_CACHE_LIST_MESSAGE && message?.type !== PAGE_CACHE_CLEAR_MESSAGE) {
+      return false;
+    }
+    const namespace = typeof message.namespace === "string" && message.namespace.trim() ? message.namespace : DEFAULT_SETTINGS.cacheNamespace;
+    try {
+      if (message.type === PAGE_CACHE_CLEAR_MESSAGE) {
+        sendResponse({ ok: true, removed: clearPageStorageRecords(namespace) });
+        return false;
+      }
+      sendResponse({ ok: true, records: readPageStorageRecords(namespace) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    return false;
+  });
   function getThreadWidthRem(widthSetting) {
     return 48 + (widthSetting - THREAD_WIDTH_MIN) * 1.55;
   }
@@ -8293,8 +9171,8 @@
     const contentWidth = `${getThreadWidthRem(settings.chatContentWidth).toFixed(2)}rem`;
     const threadWidth = `min(${contentWidth}, calc(100vw - 24px))`;
     const canvasTextSelector = [
-      `body :is([data-testid*="canvas" i], [data-testid*="artifact" i], [aria-label*="canvas" i], [aria-label*="\u753B\u5E03" i], [class*="canvas" i], [class*="artifact" i], [class*="textLayer" i], .ProseMirror, .cm-content, .monaco-editor):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`,
-      `body :is([data-testid*="document" i], [aria-label*="document" i], [aria-label*="\u6587\u6863" i]):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`
+      `body :is([data-testid*="canvas" i], [data-testid*="artifact" i], [aria-label*="canvas" i], [aria-label*="\u753B\u5E03" i], [class*="canvas" i], [class*="artifact" i], [class*="textLayer" i], .ProseMirror, .cm-content, .monaco-editor):not(#${ROOT_ID2} *):not([data-message-author-role] *):not(form *)`,
+      `body :is([data-testid*="document" i], [aria-label*="document" i], [aria-label*="\u6587\u6863" i]):not(#${ROOT_ID2} *):not([data-message-author-role] *):not(form *)`
     ].join(",\n    ");
     const layoutWidthRules = settings.chatContentWidth > OFFICIAL_THREAD_WIDTH ? `
     main {
@@ -8429,7 +9307,7 @@
     }
   `;
   }
-  function safeQueryAll(selector, root = document) {
+  function safeQueryAll2(selector, root = document) {
     try {
       return Array.from(root.querySelectorAll(selector));
     } catch {
@@ -8460,17 +9338,17 @@
     }
     window.clearTimeout(work.id);
   }
-  function normalizeText(value) {
+  function normalizeText2(value) {
     return value.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").replace(/^(You said:|ChatGPT said:|User:|Assistant:|Model:)\s*/i, "").trim();
   }
-  function extractVisibleText(element, maxCharacters = Number.POSITIVE_INFINITY) {
+  function extractVisibleText2(element, maxCharacters = Number.POSITIVE_INFINITY) {
     const parts = [];
     let length = 0;
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
         const text = node.nodeValue?.trim();
-        if (!parent || !text || parent.closest(`#${ROOT_ID}`)) {
+        if (!parent || !text || parent.closest(`#${ROOT_ID2}`)) {
           return NodeFilter.FILTER_REJECT;
         }
         const control = parent.closest(TEXT_CONTROL_SELECTOR);
@@ -8500,42 +9378,9 @@
         length += nextText.length;
       }
     }
-    return normalizeText(parts.join(" "));
+    return normalizeText2(parts.join(" "));
   }
-  function isVisibleElement(element) {
-    if (element.closest(`#${ROOT_ID}`)) {
-      return false;
-    }
-    const style = window.getComputedStyle(element);
-    if (style.display === "none" || style.visibility === "hidden") {
-      return false;
-    }
-    const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  }
-  function inferRole(element) {
-    const explicitRole = element.getAttribute("data-message-author-role");
-    if (explicitRole === "user" || explicitRole === "assistant") {
-      return explicitRole;
-    }
-    const descriptor = [
-      element.tagName,
-      element.id,
-      element.className,
-      element.getAttribute("aria-label"),
-      element.getAttribute("data-testid"),
-      element.getAttribute("data-test-id"),
-      element.getAttribute("role")
-    ].filter(Boolean).join(" ").toLowerCase();
-    if (/\b(user|human|prompt|query|request)\b/.test(descriptor)) {
-      return "user";
-    }
-    if (/\b(assistant|model|response|answer|chatgpt)\b/.test(descriptor)) {
-      return "assistant";
-    }
-    return null;
-  }
-  function sortByDomOrder(messages) {
+  function sortByDomOrder2(messages) {
     return [...messages].sort((a, b) => {
       if (a.element === b.element) {
         return 0;
@@ -8544,160 +9389,19 @@
       return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
     });
   }
-  function compactMessages(messages) {
-    const compacted = [];
-    for (const message of sortByDomOrder(messages).map((message2) => ({
-      ...message2,
-      text: normalizeText(message2.text)
-    }))) {
-      if (!message.text || message.text.length < 2 || !document.body.contains(message.element)) {
-        continue;
-      }
-      const duplicate = compacted.some((existing) => {
-        if (existing.role !== message.role) {
-          return false;
-        }
-        if (existing.element === message.element) {
-          return true;
-        }
-        const nested = existing.element.contains(message.element) || message.element.contains(existing.element);
-        if (!nested) {
-          return false;
-        }
-        return existing.text === message.text || existing.text.includes(message.text) || message.text.includes(existing.text);
-      });
-      if (!duplicate) {
-        compacted.push(message);
-      }
-    }
-    return compacted;
-  }
-  function collectChatGptMessages() {
-    const messages = [];
-    const usedRoots = /* @__PURE__ */ new Set();
-    for (const roleNode of safeQueryAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')) {
-      const role = inferRole(roleNode);
-      if (!role) {
-        continue;
-      }
-      const root = roleNode.closest('article[data-testid^="conversation-turn"]') ?? roleNode.closest('[data-testid^="conversation-turn"]') ?? roleNode;
-      const text = extractVisibleText(roleNode) || extractVisibleText(root);
-      if (text) {
-        messages.push({ role, element: role === "user" ? root : roleNode, text });
-        usedRoots.add(root);
-      }
-    }
-    for (const article of safeQueryAll('article[data-testid^="conversation-turn"]')) {
-      if (usedRoots.has(article)) {
-        continue;
-      }
-      const role = inferRole(article);
-      const text = extractVisibleText(article);
-      if (role && text) {
-        messages.push({ role, element: article, text });
-      }
-    }
-    return compactMessages(messages);
-  }
-  function stableHash(value) {
+  function stableHash2(value) {
     let hash = 5381;
     for (let index = 0; index < value.length; index += 1) {
       hash = hash * 33 ^ value.charCodeAt(index);
     }
     return (hash >>> 0).toString(36);
   }
-  function isSupplementalContextCandidate(element) {
-    const tagName = element.tagName.toLowerCase();
-    if (tagName === "html" || tagName === "body" || tagName === "main") {
-      return false;
-    }
-    if (!isVisibleElement(element) || element.closest(SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR)) {
-      return false;
-    }
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 40 || rect.height < 12) {
-      return false;
-    }
-    return true;
-  }
-  function sortSupplementalContexts(contexts) {
-    return [...contexts].sort((a, b) => {
-      if (a.element === b.element) {
-        return 0;
-      }
-      const position = a.element.compareDocumentPosition(b.element);
-      return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
-    });
-  }
-  function compactSupplementalContexts(contexts) {
-    const compacted = [];
-    const seenText = /* @__PURE__ */ new Set();
-    for (const context of sortSupplementalContexts(contexts).map((context2) => ({
-      ...context2,
-      text: normalizeText(context2.text)
-    }))) {
-      if (!context.text || context.text.length < 4 || !document.body.contains(context.element)) {
-        continue;
-      }
-      const textKey = stableHash(`${context.kind}:${context.text}`);
-      if (seenText.has(textKey)) {
-        continue;
-      }
-      let shouldAdd = true;
-      for (let index = 0; index < compacted.length; index += 1) {
-        const existing = compacted[index];
-        const nested = existing.element.contains(context.element) || context.element.contains(existing.element);
-        const overlappingText = existing.text === context.text || existing.text.includes(context.text) || context.text.includes(existing.text);
-        if (!nested && !overlappingText) {
-          continue;
-        }
-        if (context.text.length > existing.text.length && context.element.contains(existing.element)) {
-          compacted[index] = context;
-        }
-        shouldAdd = false;
-        break;
-      }
-      if (shouldAdd) {
-        compacted.push(context);
-        seenText.add(textKey);
-      }
-    }
-    return compacted;
-  }
-  function inferSupplementalContextKind(element) {
-    const descriptor = [
-      element.id,
-      element.className,
-      element.getAttribute("aria-label"),
-      element.getAttribute("data-testid"),
-      element.getAttribute("data-test-id")
-    ].filter(Boolean).join(" ").toLowerCase();
-    return /(canvas|artifact|画布|prosemirror|cm-content|monaco)/i.test(descriptor) ? "canvas" : "file";
-  }
-  function collectSupplementalContexts() {
-    const contexts = [];
-    for (const element of safeQueryAll(SUPPLEMENTAL_CONTEXT_SELECTOR).slice(0, SUPPLEMENTAL_CANDIDATE_LIMIT)) {
-      if (!isSupplementalContextCandidate(element)) {
-        continue;
-      }
-      const text = extractVisibleText(element, SUPPLEMENTAL_TEXT_LIMIT);
-      if (!text || /^(copy|copied|download|open|close|share|复制|已复制|下载|打开|关闭|分享)$/i.test(text)) {
-        continue;
-      }
-      contexts.push({
-        kind: inferSupplementalContextKind(element),
-        element,
-        text
-      });
-    }
-    return compactSupplementalContexts(contexts).slice(0, SUPPLEMENTAL_CONTEXT_LIMIT);
-  }
   function getTokenizer() {
     tokenizer ??= new Tiktoken(o200k_base_default);
     return tokenizer;
   }
   function approximateTokenCount(text) {
-    const normalized = normalizeText(text);
+    const normalized = normalizeText2(text);
     if (!normalized) {
       return 0;
     }
@@ -8707,11 +9411,11 @@
     return Math.max(1, Math.ceil(cjk * 1.08 + asciiWords * 1.25 + punctuation * 0.55));
   }
   function countTokens(text, cacheSeed) {
-    const normalized = normalizeText(text);
+    const normalized = normalizeText2(text);
     if (!normalized) {
       return 0;
     }
-    const cacheKey = `${cacheSeed}:${stableHash(normalized)}`;
+    const cacheKey = `${cacheSeed}:${stableHash2(normalized)}`;
     const cached = tokenCountCache.get(cacheKey);
     if (typeof cached === "number") {
       return cached;
@@ -8736,16 +9440,16 @@
     const seen = /* @__PURE__ */ new Set();
     let total = 0;
     let nodeCount = 0;
-    for (const child of safeQueryAll(selector, element)) {
+    for (const child of safeQueryAll2(selector, element)) {
       if (nodeCount >= TOKEN_BREAKDOWN_NODE_LIMIT) {
         break;
       }
-      const text = extractVisibleText(child);
+      const text = extractVisibleText2(child);
       if (!text) {
         continue;
       }
       nodeCount += 1;
-      const key = stableHash(text);
+      const key = stableHash2(text);
       if (seen.has(key)) {
         continue;
       }
@@ -8782,6 +9486,7 @@
     addCandidate(element);
     addCandidate(element.querySelector("[data-message-id]"));
     addCandidate(element.querySelector("[data-turn-id]"));
+    addCandidate(element.querySelector("img, picture, canvas, video"));
     addCandidate(element.querySelector('article[data-testid^="conversation-turn"]'));
     addCandidate(element.querySelector('[data-testid^="conversation-turn"]'));
     addCandidate(element.closest("[data-message-id]"));
@@ -8800,12 +9505,18 @@
         return `data-turn-id:${turnId}`;
       }
       const testId = candidate.getAttribute("data-testid")?.trim();
-      if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file)\b/i.test(testId)) {
+      if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file|image|media|picture)\b/i.test(testId)) {
         return `data-testid:${testId}`;
       }
       const id = candidate.id.trim();
-      if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file)\b/i.test(id)) {
+      if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file|image|media|picture)\b/i.test(id)) {
         return `id:${id}`;
+      }
+      if (candidate instanceof HTMLImageElement) {
+        const source = candidate.currentSrc || candidate.src;
+        if (source) {
+          return `image-src:${stableHash2(source)}`;
+        }
       }
     }
     return null;
@@ -8820,45 +9531,34 @@
     nodeAnchorRegistry.set(element, id);
     return id;
   }
-  function getStableAnchorId(message) {
-    const nativeKey = getNativeMessageKey(message.element);
-    if (nativeKey) {
-      const id2 = `cnav-msg-${stableHash(`${location.hostname}:${location.pathname}:${message.role}:${nativeKey}`)}`;
-      message.element.setAttribute(ANCHOR_ATTR, id2);
-      return id2;
-    }
-    const existing = message.element.getAttribute(ANCHOR_ATTR);
-    if (existing) {
-      return existing;
-    }
-    const id = getNodeSessionAnchorId(message.element);
-    message.element.setAttribute(ANCHOR_ATTR, id);
-    return id;
+  function getMessageAnchorElement(element) {
+    return element.closest('article[data-testid^="conversation-turn"]') ?? element.closest('[data-testid^="conversation-turn"]') ?? element.closest("[data-message-author-role]") ?? element;
   }
-  function getSupplementalContextAnchorId(context) {
-    const nativeKey = getNativeMessageKey(context.element);
+  function getStableAnchorId(message) {
+    const anchorElement = getMessageAnchorElement(message.element);
+    const nativeKey = getNativeMessageKey(anchorElement);
     if (nativeKey) {
-      const id2 = `cnav-context-${stableHash(`${location.hostname}:${location.pathname}:${context.kind}:${nativeKey}`)}`;
-      context.element.setAttribute(ANCHOR_ATTR, id2);
+      const id2 = `cnav-msg-${stableHash2(`${location.hostname}:${location.pathname}:${message.role}:${nativeKey}`)}`;
+      anchorElement.setAttribute(ANCHOR_ATTR, id2);
       return id2;
     }
-    const existing = context.element.getAttribute(ANCHOR_ATTR);
+    const existing = anchorElement.getAttribute(ANCHOR_ATTR);
     if (existing) {
       return existing;
     }
-    const id = getNodeSessionAnchorId(context.element).replace("cnav-node", `cnav-context-${context.kind}`);
-    context.element.setAttribute(ANCHOR_ATTR, id);
+    const id = getNodeSessionAnchorId(anchorElement);
+    anchorElement.setAttribute(ANCHOR_ATTR, id);
     return id;
   }
   function compactPreview(text, maxLength) {
-    const normalized = normalizeText(text);
+    const normalized = normalizeText2(text);
     if (normalized.length <= maxLength) {
       return normalized;
     }
     return `${normalized.slice(0, maxLength - 1).trim()}...`;
   }
   function summarizeAnswer(text) {
-    const normalized = normalizeText(text);
+    const normalized = normalizeText2(text);
     if (!normalized) {
       return "No assistant response captured yet.";
     }
@@ -8868,13 +9568,38 @@
     }
     return compactPreview(normalized, 180);
   }
+  function formatSupplementalContextText(context) {
+    const text = normalizeText2(context.text);
+    if (!text) {
+      return context.kind === "canvas" ? "\u753B\u5E03\u5185\u5BB9" : "\u56FE\u7247\u5185\u5BB9";
+    }
+    if (/^(图片内容|圖片內容|画布内容|畫布內容|附件内容|附件內容)$/i.test(text)) {
+      return text;
+    }
+    return context.kind === "canvas" ? `\u753B\u5E03\u5185\u5BB9\uFF1A${text}` : `\u9644\u4EF6\u5185\u5BB9\uFF1A${text}`;
+  }
+  function isContextCoveredByMessage(context, messages) {
+    return messages.some((message) => {
+      if (message.element === context.element) {
+        return true;
+      }
+      return message.element.contains(context.element) || context.element.contains(message.element);
+    });
+  }
   function buildNavigatorData(favorites, tokenBudget = DEFAULT_TOKEN_BUDGET) {
     const adapter = getAdapter();
-    const messages = adapter.collect();
+    const collection = adapter.collect();
+    const contextMessages = collection.supplementalContexts.filter((context) => !isContextCoveredByMessage(context, collection.messages)).map((context) => ({
+      role: "assistant",
+      element: context.element,
+      text: formatSupplementalContextText(context)
+    }));
+    const messages = sortByDomOrder2([...collection.messages, ...contextMessages]);
     const items = [];
     const mapEntries = [];
     const messageIds = [];
     const tokenBreakdowns = [];
+    const standaloneAssistantIds = /* @__PURE__ */ new Set();
     anchorRegistry.clear();
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index];
@@ -8882,15 +9607,43 @@
       const tokenBreakdown = getTokenBreakdown(message, id);
       messageIds.push(id);
       tokenBreakdowns.push(tokenBreakdown);
-      anchorRegistry.set(id, message.element);
+      anchorRegistry.set(id, getMessageAnchorElement(message.element));
     }
     let cumulativeTokens = 0;
+    let seenUserMessage = false;
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index];
       const id = messageIds[index];
       const tokenBreakdown = tokenBreakdowns[index];
       cumulativeTokens += tokenBreakdown.total;
       if (message.role !== "user") {
+        if (!seenUserMessage && !standaloneAssistantIds.has(id)) {
+          const answerParts2 = [];
+          let answerTokens2 = 0;
+          for (let nextIndex = index; nextIndex < messages.length; nextIndex += 1) {
+            const nextMessage = messages[nextIndex];
+            if (nextMessage.role === "user") {
+              break;
+            }
+            answerParts2.push(nextMessage.text);
+            answerTokens2 += tokenBreakdowns[nextIndex]?.total ?? 0;
+            standaloneAssistantIds.add(messageIds[nextIndex]);
+          }
+          const totalTokens2 = answerTokens2 || tokenBreakdown.total;
+          items.push({
+            id,
+            promptPreview: compactPreview(message.text, 112),
+            answerSummary: summarizeAnswer(answerParts2.join("\n\n")),
+            turnIndex: items.length + 1,
+            favorite: Boolean(favorites[id]),
+            promptTokens: 0,
+            answerTokens: totalTokens2,
+            totalTokens: totalTokens2,
+            heatLevel: getHeatLevel(totalTokens2, cumulativeTokens + totalTokens2, tokenBudget),
+            site: adapter.id,
+            mounted: true
+          });
+        }
         mapEntries.push({
           id,
           role: message.role,
@@ -8900,10 +9653,12 @@
           text: message.text,
           turnIndex: Math.max(1, items.length),
           favorite: false,
-          heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
+          heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget),
+          mounted: true
         });
         continue;
       }
+      seenUserMessage = true;
       const answerParts = [];
       let answerTokens = 0;
       for (let nextIndex = index + 1; nextIndex < messages.length; nextIndex += 1) {
@@ -8927,7 +9682,8 @@
         answerTokens,
         totalTokens,
         heatLevel,
-        site: adapter.id
+        site: adapter.id,
+        mounted: true
       });
       mapEntries.push({
         id,
@@ -8938,43 +9694,376 @@
         text: message.text,
         turnIndex: items.length,
         favorite,
-        heatLevel
+        heatLevel,
+        mounted: true
       });
     }
-    for (const context of collectSupplementalContexts()) {
-      const id = getSupplementalContextAnchorId(context);
-      const message = {
-        role: "assistant",
-        element: context.element,
-        text: context.text
-      };
-      const tokenBreakdown = getTokenBreakdown(message, id);
-      if (tokenBreakdown.total <= 0) {
-        continue;
+    return {
+      items,
+      mapEntries,
+      health: {
+        ...collection.health,
+        canAnchor: anchorRegistry.size > 0,
+        tokenTextAvailable: mapEntries.some((entry) => entry.tokenCount > 0)
       }
-      cumulativeTokens += tokenBreakdown.total;
-      anchorRegistry.set(id, context.element);
-      mapEntries.push({
-        id,
-        role: "assistant",
-        tokenCount: tokenBreakdown.total,
-        codeTokens: tokenBreakdown.code,
-        tableTokens: tokenBreakdown.table,
-        text: `${context.kind === "canvas" ? "Canvas" : "File"} context: ${context.text}`,
-        turnIndex: Math.max(1, items.length),
-        favorite: false,
-        heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
-      });
-    }
-    return { items, mapEntries };
+    };
   }
-  function scrollToNavigatorItem(id) {
+  function getNavigatorItemKey(item) {
+    return stableHash2(
+      [
+        normalizeText2(item.promptPreview).toLowerCase(),
+        normalizeText2(item.answerSummary).toLowerCase(),
+        Math.round(item.promptTokens / 8),
+        Math.round(item.answerTokens / 8)
+      ].join("|")
+    );
+  }
+  function getMapEntryKey(entry) {
+    return stableHash2(
+      [
+        entry.role,
+        normalizeText2(entry.text).toLowerCase(),
+        Math.round(entry.tokenCount / 8)
+      ].join("|")
+    );
+  }
+  function applyFavorite(item, favorites) {
+    return {
+      ...item,
+      favorite: Boolean(favorites[item.id] || item.favorite)
+    };
+  }
+  function normalizeNavigatorOrder(items) {
+    return items.map((item, index) => ({
+      ...item,
+      turnIndex: index + 1
+    }));
+  }
+  function mergeNavigatorData(previousItems, previousEntries, currentItems, currentEntries, favorites, previousScrollY) {
+    if (previousItems.length === 0) {
+      return {
+        items: normalizeNavigatorOrder(currentItems.map((item) => applyFavorite({ ...item, mounted: true }, favorites))),
+        mapEntries: currentEntries.map((entry) => ({ ...entry, mounted: true }))
+      };
+    }
+    const previousById = new Map(previousItems.map((item) => [item.id, item]));
+    const usedPreviousIds = /* @__PURE__ */ new Set();
+    const currentToMergedId = /* @__PURE__ */ new Map();
+    const replacementByPreviousId = /* @__PURE__ */ new Map();
+    const currentMergedItems = [];
+    const matchedCurrentIds = /* @__PURE__ */ new Set();
+    const findPreviousMatch = (item) => {
+      const exact = previousById.get(item.id);
+      if (exact && !usedPreviousIds.has(exact.id)) {
+        return exact;
+      }
+      const key = getNavigatorItemKey(item);
+      return previousItems.find((candidate) => !usedPreviousIds.has(candidate.id) && getNavigatorItemKey(candidate) === key);
+    };
+    for (const item of currentItems) {
+      const matched = findPreviousMatch(item);
+      const mergedId = matched?.id ?? item.id;
+      const currentAnchor = anchorRegistry.get(item.id);
+      if (currentAnchor) {
+        anchorRegistry.set(mergedId, currentAnchor);
+      }
+      currentToMergedId.set(item.id, mergedId);
+      const mergedItem = applyFavorite(
+        {
+          ...matched ?? item,
+          ...item,
+          id: mergedId,
+          mounted: true
+        },
+        favorites
+      );
+      currentMergedItems.push(mergedItem);
+      if (matched) {
+        usedPreviousIds.add(matched.id);
+        matchedCurrentIds.add(mergedId);
+        replacementByPreviousId.set(matched.id, mergedItem);
+      }
+    }
+    const result = previousItems.map(
+      (item) => replacementByPreviousId.get(item.id) ?? applyFavorite({ ...item, mounted: false }, favorites)
+    );
+    const insertFreshItem = (item, currentIndex) => {
+      if (result.some((existing) => existing.id === item.id || getNavigatorItemKey(existing) === getNavigatorItemKey(item))) {
+        return;
+      }
+      const nextKnown = currentMergedItems.slice(currentIndex + 1).find((candidate) => matchedCurrentIds.has(candidate.id));
+      if (nextKnown) {
+        const nextIndex = result.findIndex((candidate) => candidate.id === nextKnown.id);
+        if (nextIndex >= 0) {
+          result.splice(nextIndex, 0, item);
+          return;
+        }
+      }
+      const previousKnown = [...currentMergedItems.slice(0, currentIndex)].reverse().find((candidate) => matchedCurrentIds.has(candidate.id));
+      if (previousKnown) {
+        const previousIndex = result.findIndex((candidate) => candidate.id === previousKnown.id);
+        if (previousIndex >= 0) {
+          result.splice(previousIndex + 1, 0, item);
+          return;
+        }
+      }
+      if (window.scrollY < previousScrollY) {
+        result.unshift(item);
+        return;
+      }
+      result.push(item);
+    };
+    currentMergedItems.forEach((item, index) => {
+      if (!matchedCurrentIds.has(item.id)) {
+        insertFreshItem(item, index);
+      }
+    });
+    return {
+      items: normalizeNavigatorOrder(result),
+      mapEntries: mergeMapEntries(previousEntries, currentEntries, currentToMergedId, favorites)
+    };
+  }
+  function mergeMapEntries(previousEntries, currentEntries, currentToMergedId, favorites) {
+    const result = previousEntries.map((entry) => ({
+      ...entry,
+      favorite: Boolean(favorites[entry.id] || entry.favorite),
+      mounted: false
+    }));
+    const replaceOrAdd = (entry) => {
+      const id = currentToMergedId.get(entry.id) ?? entry.id;
+      const currentAnchor = anchorRegistry.get(entry.id);
+      if (currentAnchor) {
+        anchorRegistry.set(id, currentAnchor);
+      }
+      const nextEntry = {
+        ...entry,
+        id,
+        favorite: Boolean(favorites[id] || entry.favorite),
+        mounted: true
+      };
+      const existingIndex = result.findIndex(
+        (candidate) => candidate.id === id || getMapEntryKey(candidate) === getMapEntryKey(nextEntry)
+      );
+      if (existingIndex >= 0) {
+        result[existingIndex] = nextEntry;
+        return;
+      }
+      result.push(nextEntry);
+    };
+    currentEntries.forEach(replaceOrAdd);
+    return result;
+  }
+  function restoreItemsFromRecord(record, favorites) {
+    if (!record?.nodes.length) {
+      return [];
+    }
+    return normalizeNavigatorOrder(record.nodes.map((node) => restoreItemFromNode(node, favorites)));
+  }
+  function restoreItemFromNode(node, favorites) {
+    return {
+      id: node.id,
+      promptPreview: node.promptPreview,
+      answerSummary: node.answerSummary,
+      turnIndex: node.turnIndex,
+      favorite: Boolean(favorites[node.id] || node.favorite),
+      promptTokens: node.promptTokens ?? 0,
+      answerTokens: node.answerTokens ?? 0,
+      totalTokens: node.totalTokens ?? (node.promptTokens ?? 0) + (node.answerTokens ?? 0),
+      heatLevel: node.heatLevel ?? 0,
+      site: "chatgpt",
+      mounted: false
+    };
+  }
+  function restoreMapEntriesFromItems(items) {
+    return items.map((item) => ({
+      id: item.id,
+      role: "user",
+      tokenCount: item.totalTokens,
+      codeTokens: 0,
+      tableTokens: 0,
+      text: `${item.promptPreview} ${item.answerSummary}`,
+      turnIndex: item.turnIndex,
+      favorite: item.favorite,
+      heatLevel: item.heatLevel,
+      mounted: false
+    }));
+  }
+  function scrollToNavigatorItem(id, animate = true) {
     const element = anchorRegistry.get(id) ?? document.querySelector(`[${ANCHOR_ATTR}="${id}"]`);
     if (!element) {
       return;
     }
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-    flashAnchor(element);
+    const anchorElement = getMessageAnchorElement(element);
+    jumpToElement(anchorElement, animate);
+    flashAnchor(anchorElement);
+  }
+  function scrollToChatBoundary(edge, animate = true) {
+    const anchors = getConversationAnchorElements();
+    const useAnimation = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (edge === "top") {
+      const firstAnchor = anchors[0];
+      if (firstAnchor) {
+        scrollAnchorToTop(firstAnchor, useAnimation);
+        flashAnchor(firstAnchor);
+        return;
+      }
+      scrollWindowTo(0, useAnimation);
+      return;
+    }
+    const referenceAnchor = anchors[anchors.length - 1];
+    const scrollContainer = referenceAnchor ? getScrollContainer(referenceAnchor) : window;
+    if (scrollContainer === window) {
+      scrollWindowTo(getDocumentMaxScrollTop(), useAnimation);
+      return;
+    }
+    const scrollElement = scrollContainer;
+    scrollElementTo(scrollElement, Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight), useAnimation);
+  }
+  function scrollAnchorToTop(element, animate) {
+    const scrollContainer = getScrollContainer(element);
+    if (scrollContainer === window) {
+      const rect2 = element.getBoundingClientRect();
+      scrollWindowTo(Math.max(0, window.scrollY + rect2.top - 92), animate);
+      verifyJump(element, scrollContainer, animate ? 360 : 80);
+      return;
+    }
+    const scrollElement = scrollContainer;
+    const containerRect = scrollElement.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - 18);
+    scrollElementTo(scrollElement, top, animate);
+    verifyJump(element, scrollContainer, animate ? 360 : 80);
+  }
+  function getConversationAnchorElements() {
+    const candidates = Array.from(
+      /* @__PURE__ */ new Set([
+        ...Array.from(anchorRegistry.values()),
+        ...Array.from(document.querySelectorAll(`[${ANCHOR_ATTR}]`))
+      ])
+    ).map(getMessageAnchorElement).filter(isConversationAnchorElement);
+    return sortElementsByDomPosition(Array.from(new Set(candidates)));
+  }
+  function isConversationAnchorElement(element) {
+    if (!document.body.contains(element) || element.closest(`#${ROOT_ID2}`) || !element.closest("main")) {
+      return false;
+    }
+    return Boolean(
+      element.matches('article[data-testid^="conversation-turn"], [data-testid^="conversation-turn"], [data-message-author-role]') || element.querySelector("[data-message-author-role]")
+    );
+  }
+  function sortElementsByDomPosition(elements) {
+    return [...elements].sort((a, b) => {
+      if (a === b) {
+        return 0;
+      }
+      const position = a.compareDocumentPosition(b);
+      return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+    });
+  }
+  function jumpToElement(element, animate) {
+    const scrollContainer = getScrollContainer(element);
+    const useAnimation = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (scrollContainer === window) {
+      const rect2 = element.getBoundingClientRect();
+      const offset2 = Math.max(92, Math.min(220, (window.innerHeight - Math.min(rect2.height, window.innerHeight * 0.7)) / 2));
+      const top2 = Math.max(0, window.scrollY + rect2.top - offset2);
+      scrollWindowTo(top2, useAnimation);
+      verifyJump(element, scrollContainer, useAnimation ? 360 : 80);
+      return;
+    }
+    const scrollElement = scrollContainer;
+    const containerRect = scrollElement.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    const offset = Math.max(24, Math.min(160, (scrollElement.clientHeight - Math.min(rect.height, scrollElement.clientHeight * 0.7)) / 2));
+    const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - offset);
+    scrollElementTo(scrollElement, top, useAnimation);
+    verifyJump(element, scrollContainer, useAnimation ? 360 : 80);
+  }
+  function scrollWindowTo(top, animate) {
+    if (!animate) {
+      cancelNavigationAnimation();
+      window.scrollTo({ top, behavior: "auto" });
+      return;
+    }
+    animateScroll(window.scrollY, top, (value) => window.scrollTo({ top: value, behavior: "auto" }));
+  }
+  function getDocumentMaxScrollTop() {
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    const scrollHeight = Math.max(
+      0,
+      scrollingElement.scrollHeight,
+      document.documentElement.scrollHeight,
+      document.body.scrollHeight
+    );
+    return Math.max(0, scrollHeight - window.innerHeight);
+  }
+  function scrollElementTo(element, top, animate) {
+    if (!animate) {
+      cancelNavigationAnimation();
+      element.scrollTo({ top, behavior: "auto" });
+      return;
+    }
+    animateScroll(element.scrollTop, top, (value) => element.scrollTo({ top: value, behavior: "auto" }));
+  }
+  function animateScroll(from, to, apply) {
+    cancelNavigationAnimation();
+    const distance = to - from;
+    if (Math.abs(distance) < 4) {
+      apply(to);
+      return;
+    }
+    const start = performance.now();
+    const duration = Math.min(420, Math.max(180, Math.abs(distance) * 0.22));
+    const easeOutCubic = (value) => 1 - Math.pow(1 - value, 3);
+    const step = (now) => {
+      const progress = Math.min(1, (now - start) / duration);
+      apply(Math.round(from + distance * easeOutCubic(progress)));
+      if (progress < 1) {
+        navigationAnimationFrame = window.requestAnimationFrame(step);
+        return;
+      }
+      navigationAnimationFrame = 0;
+      apply(to);
+    };
+    navigationAnimationFrame = window.requestAnimationFrame(step);
+  }
+  function cancelNavigationAnimation() {
+    if (!navigationAnimationFrame) {
+      return;
+    }
+    window.cancelAnimationFrame(navigationAnimationFrame);
+    navigationAnimationFrame = 0;
+  }
+  function getScrollContainer(element) {
+    let current = element.parentElement;
+    while (current && current !== document.body && current !== document.documentElement) {
+      const style = window.getComputedStyle(current);
+      const canScroll = /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
+      if (canScroll && current.scrollHeight > current.clientHeight + 4) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return window;
+  }
+  function verifyJump(element, scrollContainer, delay = 80) {
+    window.setTimeout(() => {
+      const rect = element.getBoundingClientRect();
+      const topLimit = scrollContainer === window ? 72 : scrollContainer.getBoundingClientRect().top + 16;
+      const bottomLimit = scrollContainer === window ? window.innerHeight - 96 : scrollContainer.getBoundingClientRect().bottom - 16;
+      if (rect.bottom >= topLimit && rect.top <= bottomLimit) {
+        return;
+      }
+      if (scrollContainer === window) {
+        const top2 = Math.max(0, window.scrollY + rect.top - topLimit);
+        scrollWindowTo(top2, false);
+        return;
+      }
+      const scrollElement = scrollContainer;
+      const containerRect = scrollElement.getBoundingClientRect();
+      const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - 16);
+      scrollElementTo(scrollElement, top, false);
+    }, delay);
   }
   function flashAnchor(element) {
     const previousOutline = element.style.outline;
@@ -9010,7 +10099,7 @@
       return result;
     };
   }
-  function persistRecord(settings, pageKey, items, favorites) {
+  function persistRecord(settings, pageKey, items, favorites, health) {
     if (settings.cacheMode === "off") {
       return Promise.resolve(true);
     }
@@ -9022,6 +10111,7 @@
       title: document.title || getAdapter().label,
       updatedAt: Date.now(),
       favorites,
+      health: health ? toStoredAdapterHealth(health) : void 0,
       nodes: items.map((item) => ({
         id: item.id,
         promptPreview: item.promptPreview,
@@ -9040,6 +10130,18 @@
     }
     return storageSet({ [pageKey]: record });
   }
+  function toStoredAdapterHealth(health) {
+    return {
+      status: health.status,
+      reason: health.reason,
+      ruleId: health.ruleId,
+      messageCount: health.messageCount,
+      userCount: health.userCount,
+      assistantCount: health.assistantCount,
+      source: health.source,
+      updatedAt: Date.now()
+    };
+  }
   function makeRecordSignature(items, favorites) {
     const favoriteIds = Object.keys(favorites).sort().join(",");
     const itemSignature = items.map((item) => `${item.id}:${item.promptPreview}:${item.answerSummary}:${item.totalTokens}:${item.favorite ? "1" : "0"}`).join("|");
@@ -9054,103 +10156,12 @@
     }
     return String(value);
   }
-  function normalizeDetectedChatGptModelLabel(value) {
-    const text = normalizeText(value).replace(/\b(model|mode|当前模型|模型)\b\s*[:：]?\s*/gi, "").trim();
-    const lower = text.toLowerCase();
-    if (!text || text.length > 72 || /token|预算|local estimate|copy|share|settings|导航器|navigator/i.test(text)) {
+  function detectModelLabel() {
+    try {
+      return getAdapter().detectModelLabel();
+    } catch {
       return "";
     }
-    const explicit = text.match(/\bGPT\s*[- ]?\s*(\d+(?:\.\d+)?)(?:\s*[- ]?\s*(instant|thinking|pro))?\b/i);
-    if (explicit) {
-      const version = explicit[1];
-      const mode = explicit[2]?.toLowerCase();
-      if (mode === "instant") {
-        return `GPT-${version} Instant`;
-      }
-      if (mode === "thinking") {
-        return `GPT-${version} Thinking`;
-      }
-      if (mode === "pro") {
-        return `GPT-${version} Pro`;
-      }
-      return `GPT-${version}`;
-    }
-    if (/^(instant|fast)$/i.test(text) || /\binstant\b/.test(lower)) {
-      return "GPT-5.5 Instant";
-    }
-    if (/^(thinking|reasoning)$/i.test(text) || /\bthinking\b/.test(lower)) {
-      return "GPT-5.5 Thinking";
-    }
-    if (/^pro$/i.test(text) || /\bgpt\b.*\bpro\b/i.test(text)) {
-      return "GPT-5.5 Pro";
-    }
-    return "";
-  }
-  function scoreModelCandidate(element, normalizedLabel, rawText) {
-    let score = 0;
-    const testId = element.getAttribute("data-testid") || "";
-    const ariaLabel = element.getAttribute("aria-label") || "";
-    const text = normalizeText(rawText);
-    if (/model|gpt/i.test(testId) || /model|gpt/i.test(ariaLabel)) {
-      score += 40;
-    }
-    if (/^(Instant|Thinking|Pro)$/i.test(text)) {
-      score += 34;
-    }
-    if (/GPT[- ]?\d/i.test(text)) {
-      score += 30;
-    }
-    if (element.closest("form, main")) {
-      score += 12;
-    }
-    if (element.matches("button, [role='button']")) {
-      score += 8;
-    }
-    if (/Thinking|Pro/.test(normalizedLabel)) {
-      score += 6;
-    }
-    return score - Math.max(0, text.length - 32);
-  }
-  function detectModelLabel() {
-    const selectors = [
-      '[data-testid*="model" i]',
-      '[aria-label*="model" i]',
-      '[aria-label*="GPT" i]',
-      "main form button",
-      "form button",
-      "header button",
-      "button",
-      '[role="button"]'
-    ];
-    let best = null;
-    for (const selector of selectors) {
-      for (const element of safeQueryAll(selector)) {
-        if (!isVisibleElement(element) || element.closest(`#${ROOT_ID}`)) {
-          continue;
-        }
-        const textValues = [
-          element.innerText,
-          element.getAttribute("aria-label"),
-          element.getAttribute("title")
-        ].filter(Boolean);
-        for (const rawText of textValues) {
-          const label = normalizeDetectedChatGptModelLabel(rawText);
-          if (!label) {
-            continue;
-          }
-          const rawNormalized = normalizeText(rawText);
-          const modelishAttributes = `${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`;
-          if (/^Pro$/i.test(rawNormalized) && !element.closest("form, main") && !/model|gpt/i.test(modelishAttributes)) {
-            continue;
-          }
-          const score = scoreModelCandidate(element, label, rawText);
-          if (!best || score > best.score) {
-            best = { label, score };
-          }
-        }
-      }
-    }
-    return best?.label ?? "";
   }
   function parseBudgetText(value) {
     const normalized = value.replace(/,/g, "").trim().toLowerCase();
@@ -9345,6 +10356,15 @@
     } finally {
       window.clearTimeout(timer);
     }
+  }
+  async function fetchRemoteCompatRules() {
+    const text = await fetchTextWithTimeout(CHATGPT_COMPAT_RULES_URL, 8e3);
+    const parsed = JSON.parse(text);
+    const rules = normalizeCompatRulesPayload(parsed);
+    if (rules.length === 0) {
+      throw new Error("Remote compatibility rules are empty or invalid");
+    }
+    return rules;
   }
   function getModelVersion(model) {
     const match = model.id.match(/^gpt-(\d+)(?:\.(\d+))?/);
@@ -9571,7 +10591,13 @@
     const [modelCatalog, setModelCatalog] = (0, import_react3.useState)(BUILT_IN_MODEL_BUDGETS);
     const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = (0, import_react3.useState)(0);
     const [modelSyncStatus, setModelSyncStatus] = (0, import_react3.useState)("idle");
+    const [adapterHealth, setAdapterHealth] = (0, import_react3.useState)(() => createDefaultAdapterHealth());
+    const [detectedModelLabel, setDetectedModelLabel] = (0, import_react3.useState)("");
+    const [compatRulesSyncStatus, setCompatRulesSyncStatus] = (0, import_react3.useState)("idle");
+    const [compatRuleCount, setCompatRuleCount] = (0, import_react3.useState)(0);
     const favoritesRef = (0, import_react3.useRef)(favorites);
+    const itemsRef = (0, import_react3.useRef)(items);
+    const mapEntriesRef = (0, import_react3.useRef)(mapEntries);
     const pageKeyRef = (0, import_react3.useRef)(pageKey);
     const settingsRef = (0, import_react3.useRef)(settings);
     const modelCatalogRef = (0, import_react3.useRef)(modelCatalog);
@@ -9583,7 +10609,10 @@
     const scanIdleWorkRef = (0, import_react3.useRef)(null);
     const scanRunningRef = (0, import_react3.useRef)(false);
     const scanQueuedRef = (0, import_react3.useRef)(false);
+    const lastScanScrollYRef = (0, import_react3.useRef)(window.scrollY);
     favoritesRef.current = favorites;
+    itemsRef.current = items;
+    mapEntriesRef.current = mapEntries;
     pageKeyRef.current = pageKey;
     settingsRef.current = settings;
     modelCatalogRef.current = modelCatalog;
@@ -9594,18 +10623,39 @@
       }
       scanRunningRef.current = true;
       try {
-        const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
-        const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
+        const modelLabel = detectModelLabel();
+        const { budget } = getTokenBudget(settingsRef.current, modelLabel, modelCatalogRef.current);
+        const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData(
           favoritesRef.current,
           budget
         );
-        setItems(nextItems);
-        setMapEntries(nextMapEntries);
-        const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
+        const merged = mergeNavigatorData(
+          itemsRef.current,
+          mapEntriesRef.current,
+          nextItems,
+          nextMapEntries,
+          favoritesRef.current,
+          lastScanScrollYRef.current
+        );
+        lastScanScrollYRef.current = window.scrollY;
+        itemsRef.current = merged.items;
+        mapEntriesRef.current = merged.mapEntries;
+        setItems(merged.items);
+        setMapEntries(merged.mapEntries);
+        setAdapterHealth(nextHealth);
+        setDetectedModelLabel((current) => current === modelLabel ? current : modelLabel);
+        const nextSignature = makeRecordSignature(merged.items, favoritesRef.current);
         if (nextSignature !== lastRecordSignatureRef.current) {
           lastRecordSignatureRef.current = nextSignature;
-          await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+          await persistRecord(settingsRef.current, pageKeyRef.current, merged.items, favoritesRef.current, nextHealth);
         }
+      } catch (error) {
+        console.warn("[GPT\u804A\u5929\u5BFC\u822A\u5668] \u626B\u63CF\u5F53\u524D\u9875\u9762\u5931\u8D25\uFF0C\u4FDD\u7559\u4E0A\u4E00\u8F6E\u6570\u636E\uFF1A", error);
+        setAdapterHealth((current) => ({
+          ...current,
+          status: current.messageCount > 0 ? "degraded" : "unsupported",
+          reason: error instanceof Error ? error.message : "Scan failed before the page could be indexed."
+        }));
       } finally {
         scanRunningRef.current = false;
         if (scanQueuedRef.current) {
@@ -9666,6 +10716,55 @@
         setModelSyncStatus("failed");
       }
     }, []);
+    const syncCompatRules = async () => {
+      setCompatRulesSyncStatus("syncing");
+      try {
+        const rules = await fetchRemoteCompatRules();
+        const updatedAt = Date.now();
+        setActiveCompatRules(rules, "remote");
+        setCompatRuleCount(rules.length);
+        await storageSet({
+          [COMPAT_RULES_STORAGE_KEY]: {
+            updatedAt,
+            rules
+          }
+        });
+        await updateSettings({
+          compatRulesRemoteEnabled: true,
+          compatRulesLastSyncAt: updatedAt,
+          compatRulesSource: "remote"
+        });
+        setCompatRulesSyncStatus("synced");
+        scheduleScan(100);
+      } catch (error) {
+        console.warn("[GPT\u804A\u5929\u5BFC\u822A\u5668] \u540C\u6B65 ChatGPT \u517C\u5BB9\u89C4\u5219\u5931\u8D25\uFF1A", error);
+        setActiveCompatRules([], "built-in");
+        setCompatRuleCount(0);
+        await updateSettings({
+          compatRulesRemoteEnabled: false,
+          compatRulesSource: "built-in"
+        });
+        setCompatRulesSyncStatus("failed");
+        scheduleScan(100);
+      }
+    };
+    const resetCompatRules = async () => {
+      setActiveCompatRules([], "built-in");
+      setCompatRuleCount(0);
+      setCompatRulesSyncStatus("idle");
+      await updateSettings({
+        compatRulesRemoteEnabled: false,
+        compatRulesLastSyncAt: 0,
+        compatRulesSource: "built-in"
+      });
+      await storageSet({
+        [COMPAT_RULES_STORAGE_KEY]: {
+          updatedAt: 0,
+          rules: []
+        }
+      });
+      scheduleScan(100);
+    };
     (0, import_react3.useEffect)(() => {
       installRouteEvents();
       let lastHref = location.href;
@@ -9719,6 +10818,38 @@
         cancelIdleWork(catalogSyncWork);
       };
     }, [syncModelCatalog]);
+    (0, import_react3.useEffect)(() => {
+      let cancelled = false;
+      async function loadCompatRules() {
+        if (!settings.compatRulesRemoteEnabled || settings.compatRulesSource !== "remote") {
+          setActiveCompatRules([], "built-in");
+          setCompatRuleCount(0);
+          return;
+        }
+        const stored = await storageGet(COMPAT_RULES_STORAGE_KEY);
+        if (cancelled) {
+          return;
+        }
+        const rules = normalizeCompatRulesPayload({
+          schemaVersion: 1,
+          rules: stored?.rules ?? []
+        });
+        if (rules.length === 0) {
+          setActiveCompatRules([], "built-in");
+          setCompatRuleCount(0);
+          setCompatRulesSyncStatus("failed");
+          return;
+        }
+        setActiveCompatRules(rules, "remote");
+        setCompatRuleCount(rules.length);
+        setCompatRulesSyncStatus("synced");
+        scheduleScan(100);
+      }
+      void loadCompatRules();
+      return () => {
+        cancelled = true;
+      };
+    }, [scheduleScan, settings.compatRulesRemoteEnabled, settings.compatRulesSource]);
     (0, import_react3.useEffect)(() => {
       const syncTheme = () => setTheme(detectPageTheme());
       const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -9820,7 +10951,7 @@
       }
       const handlePointerDown = (event) => {
         const target = event.target;
-        if (!target || document.getElementById(ROOT_ID)?.contains(target)) {
+        if (!target || document.getElementById(ROOT_ID2)?.contains(target)) {
           return;
         }
         updateSettings({ collapsed: true });
@@ -9837,7 +10968,27 @@
         if (cancelled) {
           return;
         }
-        setFavorites(storedRecord?.favorites ?? {});
+        const nextFavorites = storedRecord?.favorites ?? {};
+        const restoredItems = restoreItemsFromRecord(storedRecord, nextFavorites);
+        const restoredEntries = restoreMapEntriesFromItems(restoredItems);
+        favoritesRef.current = nextFavorites;
+        itemsRef.current = restoredItems;
+        mapEntriesRef.current = restoredEntries;
+        lastRecordSignatureRef.current = makeRecordSignature(restoredItems, nextFavorites);
+        setFavorites(nextFavorites);
+        setItems(restoredItems);
+        setMapEntries(restoredEntries);
+        setAdapterHealth(storedRecord?.health ? {
+          status: storedRecord.health.status,
+          reason: storedRecord.health.reason,
+          ruleId: storedRecord.health.ruleId,
+          messageCount: storedRecord.health.messageCount,
+          userCount: storedRecord.health.userCount,
+          assistantCount: storedRecord.health.assistantCount,
+          canAnchor: false,
+          tokenTextAvailable: restoredEntries.length > 0,
+          source: storedRecord.health.source
+        } : createDefaultAdapterHealth());
       }
       loadState();
       return () => {
@@ -9851,6 +11002,8 @@
       modelCatalog,
       pageKey,
       scheduleScan,
+      settings.compatRulesRemoteEnabled,
+      settings.compatRulesSource,
       settings.cacheMode,
       settings.manualTokenBudget,
       settings.tokenBudgetMode,
@@ -9865,14 +11018,22 @@
         return target.parentElement;
       };
       const observer = new MutationObserver((mutations) => {
-        const relevantMutations = mutations.filter((mutation) => {
+        let hasRelevantMutation = false;
+        let textOnly = true;
+        for (const mutation of mutations) {
           const element = getMutationElement(mutation);
-          return element && !element.closest(`#${ROOT_ID}`);
-        });
-        if (relevantMutations.length === 0) {
+          if (!element || element.closest(`#${ROOT_ID2}`)) {
+            continue;
+          }
+          hasRelevantMutation = true;
+          if (mutation.type !== "characterData") {
+            textOnly = false;
+            break;
+          }
+        }
+        if (!hasRelevantMutation) {
           return;
         }
-        const textOnly = relevantMutations.every((mutation) => mutation.type === "characterData");
         scheduleScan(textOnly ? STREAMING_SCAN_DEBOUNCE_MS : SCAN_DEBOUNCE_MS);
       });
       observer.observe(document.body, {
@@ -9932,7 +11093,9 @@
           })?.id ?? null;
         }
         setActiveId(selected);
-        setViewportMetrics(createViewportMetrics(mapEntries));
+        if (settingsRef.current.tokenPanelEnabled) {
+          setViewportMetrics(createViewportMetrics(mapEntries));
+        }
       };
       const scheduleViewportUpdate = () => {
         if (frame) {
@@ -9950,7 +11113,7 @@
         window.removeEventListener("scroll", scheduleViewportUpdate);
         window.removeEventListener("resize", scheduleViewportUpdate);
       };
-    }, [items, mapEntries]);
+    }, [items, mapEntries, settings.tokenPanelEnabled]);
     const filteredItems = (0, import_react3.useMemo)(() => {
       const normalizedQuery = query.trim().toLowerCase();
       return items.filter((item) => {
@@ -9963,7 +11126,6 @@
         return `${item.promptPreview} ${item.answerSummary}`.toLowerCase().includes(normalizedQuery);
       });
     }, [favoritesOnly, items, query]);
-    const detectedModelLabel = (0, import_react3.useMemo)(() => detectModelLabel(), [items.length, pageId]);
     const tokenStats = (0, import_react3.useMemo)(
       () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
       [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
@@ -9971,6 +11133,10 @@
     const selectedTokenModelId = modelCatalog.some((model) => model.id === settings.tokenModelId) ? settings.tokenModelId : "chatgpt-auto";
     const tokenBudgetPercent = tokenStats.budget > 0 ? tokenStats.total / tokenStats.budget * 100 : 0;
     const syncStatusLabel = modelSyncStatus === "syncing" ? t.tokenModelSyncing : modelSyncStatus === "synced" ? t.tokenModelSynced : modelSyncStatus === "failed" ? t.tokenModelSyncFailed : t.tokenModelSync;
+    const compatSyncLabel = compatRulesSyncStatus === "syncing" ? t.compatRulesSyncing : compatRulesSyncStatus === "synced" ? t.compatRulesSynced : compatRulesSyncStatus === "failed" ? t.compatRulesSyncFailed : t.compatRulesSync;
+    const healthLabel = adapterHealth.status === "ok" ? t.adapterStatusOk : adapterHealth.status === "degraded" ? t.adapterStatusDegraded : t.adapterStatusUnsupported;
+    const compatSourceLabel = activeCompatRulesSource === "remote" ? t.compatRulesRemote : t.compatRulesBuiltIn;
+    const compatLastSyncLabel = settings.compatRulesLastSyncAt ? new Date(settings.compatRulesLastSyncAt).toLocaleString() : t.compatRulesNeverSynced;
     const hudPosition = tokenHudDraft ?? (settings.tokenHudX > 0 || settings.tokenHudY > 0 ? { x: settings.tokenHudX, y: settings.tokenHudY } : null);
     const cacheLabel = settings.cacheMode === "chrome" ? t.extensionCache : settings.cacheMode === "page" ? t.pageCache : t.memoryOnly;
     const showThreadHandles = Boolean(resizeFrame && (settings.collapsed || resizingSide));
@@ -10093,13 +11259,17 @@
         favorite: current.id === item.id ? !itemFavorite : current.favorite
       }));
       setFavorites(nextFavorites);
+      itemsRef.current = nextItems;
       setItems(nextItems);
-      setMapEntries(
-        (currentEntries) => currentEntries.map(
+      setMapEntries((currentEntries) => {
+        const nextEntries = currentEntries.map(
           (entry) => entry.id === item.id ? { ...entry, favorite: !itemFavorite } : entry
-        )
-      );
-      await persistRecord(settings, pageKey, nextItems, nextFavorites);
+        );
+        mapEntriesRef.current = nextEntries;
+        return nextEntries;
+      });
+      lastRecordSignatureRef.current = makeRecordSignature(nextItems, nextFavorites);
+      await persistRecord(settings, pageKey, nextItems, nextFavorites, adapterHealth);
     };
     const renderTokenPanel = (variant) => {
       if (!settings.tokenPanelEnabled) {
@@ -10178,7 +11348,8 @@
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-token-note", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: tokenStats.budgetLabel }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly })
-              ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-token-scope", children: t.tokenVisibleDomOnly })
             ] })
           ]
         }
@@ -10218,6 +11389,39 @@
         )
       ] }) : null,
       settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "div",
+        {
+          className: "cnav-scroll-jump",
+          "data-theme": theme,
+          onMouseDown: (event) => event.stopPropagation(),
+          onClick: (event) => event.stopPropagation(),
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                className: "cnav-scroll-jump-button",
+                type: "button",
+                onClick: () => scrollToChatBoundary("top", settings.navigateAnimationEnabled),
+                title: t.scrollToTop,
+                "aria-label": t.scrollToTop,
+                children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ArrowUpToLine, { size: 18, "aria-hidden": "true" })
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                className: "cnav-scroll-jump-button",
+                type: "button",
+                onClick: () => scrollToChatBoundary("bottom", settings.navigateAnimationEnabled),
+                title: t.scrollToBottom,
+                "aria-label": t.scrollToBottom,
+                children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ArrowDownToLine, { size: 18, "aria-hidden": "true" })
+              }
+            )
+          ]
+        }
+      ),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "aside",
         {
@@ -10244,7 +11448,15 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "cnav-header", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-title-group", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-kicker", children: adapter.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { children: t.appName })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { children: t.appName }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "span",
+                  {
+                    className: `cnav-health-badge is-${adapterHealth.status}`,
+                    title: `${adapterHealth.reason} \xB7 ${adapterHealth.ruleId}`,
+                    children: healthLabel
+                  }
+                )
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-header-actions", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -10507,6 +11719,17 @@
                 )
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-toggle-field", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.navigateAnimation }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: settings.navigateAnimationEnabled,
+                    onChange: (event) => updateSettings({ navigateAnimationEnabled: event.currentTarget.checked })
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "cnav-toggle-field", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.tokenPanel }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "input",
@@ -10586,7 +11809,37 @@
                     onChange: (event) => updateSettings({ manualTokenBudget: Number(event.currentTarget.value) })
                   }
                 )
-              ] }) : null
+              ] }) : null,
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-display-section-title", children: t.compatRules }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-compat-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-compat-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.compatRulesSource }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: compatSourceLabel })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-compat-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.compatRulesActive }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: adapterHealth.ruleId })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-compat-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: t.compatRulesLastSync }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: compatLastSyncLabel })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: t.compatRulesNote }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-compat-actions", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      className: "cnav-sync-button",
+                      type: "button",
+                      disabled: compatRulesSyncStatus === "syncing",
+                      onClick: () => void syncCompatRules(),
+                      title: `${compatRuleCount} ${t.compatRulesCount}`,
+                      children: compatSyncLabel
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "cnav-reset-button", type: "button", onClick: () => void resetCompatRules(), children: t.compatRulesReset })
+                ] })
+              ] })
             ] }) : null,
             settings.tokenPanelMode === "dock" ? renderTokenPanel("dock") : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "cnav-controls", children: [
@@ -10628,7 +11881,7 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-list-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-list", role: "list", ref: listRef, children: filteredItems.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "cnav-empty", children: items.length === 0 ? t.noNodes : t.noNodeMatches }) : filteredItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "div",
               {
-                className: `cnav-item${activeId === item.id ? " is-active" : ""} is-heat-${item.heatLevel}`,
+                className: `cnav-item${activeId === item.id ? " is-active" : ""}${item.mounted ? "" : " is-unmounted"} is-heat-${item.heatLevel}`,
                 role: "listitem",
                 children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -10636,13 +11889,14 @@
                     {
                       className: "cnav-item-main",
                       type: "button",
-                      onClick: () => scrollToNavigatorItem(item.id),
+                      onClick: () => scrollToNavigatorItem(item.id, settings.navigateAnimationEnabled),
+                      title: item.mounted ? void 0 : t.nodeUnmounted,
                       children: [
                         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-item-index", children: item.turnIndex }),
                         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "cnav-item-copy", children: [
                           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-prompt", children: item.promptPreview }),
                           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-answer", children: item.answerSummary }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-token-line", children: `${formatTokenCount(item.totalTokens)} ${t.tokenPanelShort}` })
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "cnav-token-line", children: `${formatTokenCount(item.totalTokens)} ${t.tokenPanelShort}${item.mounted ? "" : ` \xB7 ${t.nodeUnmounted}`}` })
                         ] }),
                         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronRight, { className: "cnav-item-arrow", size: 15, "aria-hidden": "true" })
                       ]
@@ -10674,11 +11928,11 @@
     ] });
   }
   function mount() {
-    if (document.getElementById(ROOT_ID)) {
+    if (document.getElementById(ROOT_ID2)) {
       return;
     }
     const rootElement = document.createElement("div");
-    rootElement.id = ROOT_ID;
+    rootElement.id = ROOT_ID2;
     document.documentElement.appendChild(rootElement);
     (0, import_client.createRoot)(rootElement).render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ConversationNavigator, {}));
   }
@@ -10738,6 +11992,8 @@ lucide-react/dist/esm/shared/src/utils.js:
 lucide-react/dist/esm/defaultAttributes.js:
 lucide-react/dist/esm/Icon.js:
 lucide-react/dist/esm/createLucideIcon.js:
+lucide-react/dist/esm/icons/arrow-down-to-line.js:
+lucide-react/dist/esm/icons/arrow-up-to-line.js:
 lucide-react/dist/esm/icons/chart-column.js:
 lucide-react/dist/esm/icons/chevron-right.js:
 lucide-react/dist/esm/icons/chevrons-up-down.js:

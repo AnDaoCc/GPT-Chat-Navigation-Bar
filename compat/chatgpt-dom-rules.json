@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-05-10",
+  "rules": [
+    {
+      "id": "chatgpt-current-2026-remote",
+      "label": "ChatGPT current DOM remote rule",
+      "priority": 130,
+      "messageSelectors": [
+        "[data-message-author-role=\"user\"]",
+        "[data-message-author-role=\"assistant\"]"
+      ],
+      "turnSelectors": [
+        "article[data-testid^=\"conversation-turn\"]",
+        "[data-testid^=\"conversation-turn\"]"
+      ],
+      "modelSelectors": [
+        "[data-testid*=\"model\" i]",
+        "[aria-label*=\"model\" i]",
+        "[aria-label*=\"GPT\" i]",
+        "main form button",
+        "form button",
+        "header button",
+        "button",
+        "[role=\"button\"]"
+      ],
+      "supplementalSelectors": [
+        "[data-testid*=\"canvas\" i]",
+        "[data-testid*=\"artifact\" i]",
+        "[data-testid*=\"document\" i]",
+        "[data-testid*=\"attachment\" i]",
+        "[data-testid*=\"file\" i]",
+        "[data-testid*=\"image\" i]",
+        "[data-testid*=\"media\" i]",
+        "[data-testid*=\"picture\" i]",
+        "[aria-label*=\"canvas\" i]",
+        "[aria-label*=\"artifact\" i]",
+        "[aria-label*=\"document\" i]",
+        "[aria-label*=\"attachment\" i]",
+        "[aria-label*=\"file\" i]",
+        "[aria-label*=\"image\" i]",
+        "[aria-label*=\"picture\" i]",
+        "[aria-label*=\"画布\" i]",
+        "[aria-label*=\"文档\" i]",
+        "[aria-label*=\"附件\" i]",
+        "[aria-label*=\"文件\" i]",
+        "[aria-label*=\"图片\" i]",
+        "[aria-label*=\"圖片\" i]",
+        "[class*=\"canvas\" i]",
+        "[class*=\"artifact\" i]",
+        "[class*=\"document\" i]",
+        "[class*=\"attachment\" i]",
+        "[class*=\"generated-image\" i]",
+        "[class*=\"image\" i]",
+        "[class*=\"textLayer\" i]",
+        ".ProseMirror",
+        ".cm-content",
+        ".monaco-editor",
+        "[contenteditable=\"true\"]",
+        "[data-page-number]"
+      ],
+      "supplementalExcludeSelectors": [
+        "#conversation-navigator-root",
+        "article[data-testid^=\"conversation-turn\"]",
+        "[data-testid^=\"conversation-turn\"]",
+        "[data-message-author-role]",
+        "[data-testid*=\"composer\" i]",
+        "[aria-label*=\"composer\" i]",
+        "[aria-label*=\"输入\" i]",
+        "[aria-label*=\"發送訊息\" i]",
+        "[aria-label*=\"发送消息\" i]",
+        "form"
+      ],
+      "textControlSelectors": [
+        "button",
+        "[role=\"button\"]",
+        "[role=\"menuitem\"]",
+        "select",
+        "textarea",
+        "input",
+        "option"
+      ],
+      "textIgnoredSelectors": [
+        "script",
+        "style",
+        "noscript",
+        "svg",
+        "menu",
+        "[role=\"menu\"]",
+        "[role=\"toolbar\"]",
+        "[hidden]",
+        "[aria-hidden=\"true\"]",
+        "[data-testid*=\"copy\" i]",
+        "[data-testid*=\"clipboard\" i]",
+        "[data-testid*=\"action\" i]",
+        "[data-testid*=\"toolbar\" i]",
+        "[class*=\"copy\" i]",
+        "[class*=\"toolbar\" i]"
+      ],
+      "userHints": ["user", "human", "prompt", "query", "request"],
+      "assistantHints": ["assistant", "model", "response", "answer", "chatgpt"],
+      "fallbackRoleByOrder": true
+    }
+  ]
+}

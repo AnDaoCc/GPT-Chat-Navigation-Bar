@@ -5,6 +5,8 @@ import {
   CacheMode,
   DEFAULT_SETTINGS,
   NavigatorSettings,
+  PAGE_CACHE_CLEAR_MESSAGE,
+  PAGE_CACHE_LIST_MESSAGE,
   isNavigatorRecordKey,
   normalizeSettings,
   sanitizeCacheNamespace,
@@ -19,7 +21,20 @@ type StoredRecordEntry = {
   record: StoredConversationRecord;
 };
 
-function readAllRecords(namespace: string): Promise<StoredRecordEntry[]> {
+type PageCacheResponse = {
+  ok?: boolean;
+  records?: StoredRecordEntry[];
+  removed?: number;
+  error?: string;
+};
+
+function sortRecordEntries(records: StoredRecordEntry[]): StoredRecordEntry[] {
+  return records
+    .filter((entry) => typeof entry.key === "string" && Array.isArray(entry.record?.nodes))
+    .sort((a, b) => (b.record.updatedAt || 0) - (a.record.updatedAt || 0));
+}
+
+function readChromeRecords(namespace: string): Promise<StoredRecordEntry[]> {
   return new Promise((resolve) => {
     chrome.storage.local.get(null, (result) => {
       const records = Object.entries(result)
@@ -27,13 +42,66 @@ function readAllRecords(namespace: string): Promise<StoredRecordEntry[]> {
         .map(([key, value]) => ({
           key,
           record: value as StoredConversationRecord
-        }))
-        .filter((entry) => Array.isArray(entry.record.nodes))
-        .sort((a, b) => b.record.updatedAt - a.record.updatedAt);
+        }));
 
-      resolve(records);
+      resolve(sortRecordEntries(records));
     });
   });
+}
+
+function queryActiveTabId(): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    if (!chrome.tabs?.query) {
+      resolve(undefined);
+      return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      resolve(tabs[0]?.id);
+    });
+  });
+}
+
+async function sendPageCacheMessage(type: string, namespace: string): Promise<PageCacheResponse | undefined> {
+  const tabId = await queryActiveTabId();
+  if (typeof tabId !== "number") {
+    return undefined;
+  }
+
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type, namespace }, (response?: PageCacheResponse) => {
+      if (chrome.runtime.lastError) {
+        resolve(undefined);
+        return;
+      }
+
+      resolve(response);
+    });
+  });
+}
+
+async function readPageRecords(namespace: string): Promise<StoredRecordEntry[]> {
+  const response = await sendPageCacheMessage(PAGE_CACHE_LIST_MESSAGE, namespace);
+  return response?.ok && Array.isArray(response.records) ? sortRecordEntries(response.records) : [];
+}
+
+async function readRecords(settings: NavigatorSettings): Promise<StoredRecordEntry[]> {
+  if (settings.cacheMode === "off") {
+    return [];
+  }
+
+  return settings.cacheMode === "page"
+    ? readPageRecords(settings.cacheNamespace)
+    : readChromeRecords(settings.cacheNamespace);
+}
+
+async function clearRecords(settings: NavigatorSettings, records: StoredRecordEntry[]): Promise<void> {
+  if (settings.cacheMode === "page") {
+    await sendPageCacheMessage(PAGE_CACHE_CLEAR_MESSAGE, settings.cacheNamespace);
+    return;
+  }
+
+  await removeStoredRecords(records.map((entry) => entry.key));
 }
 
 function readSettings(): Promise<NavigatorSettings> {
@@ -67,7 +135,7 @@ export function Popup() {
     async function load() {
       const nextSettings = await readSettings();
       setSettings(nextSettings);
-      setRecords(await readAllRecords(nextSettings.cacheNamespace));
+      setRecords(await readRecords(nextSettings));
     }
 
     load();
@@ -81,8 +149,8 @@ export function Popup() {
 
   const handleClear = async () => {
     setIsClearing(true);
-    await removeStoredRecords(records.map((entry) => entry.key));
-    setRecords([]);
+    await clearRecords(settings, records);
+    setRecords(await readRecords(settings));
     setIsClearing(false);
   };
 
@@ -91,7 +159,7 @@ export function Popup() {
     const nextSettings = normalizeSettings({ ...settings, ...patch });
     setSettings(nextSettings);
     await writeSettings(nextSettings);
-    setRecords(await readAllRecords(nextSettings.cacheNamespace));
+    setRecords(await readRecords(nextSettings));
     setIsSaving(false);
   };
 

@@ -1,6 +1,8 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   BarChart3,
   ChevronRight,
   ChevronsUpDown,
@@ -18,19 +20,35 @@ import { Tiktoken } from "js-tiktoken/lite";
 import o200kBase from "js-tiktoken/ranks/o200k_base";
 import {
   AppLanguage,
+  CompatRulesSource,
   DEFAULT_SETTINGS,
   NavigatorSettings,
+  PAGE_CACHE_CLEAR_MESSAGE,
+  PAGE_CACHE_LIST_MESSAGE,
   STORAGE_SETTINGS_KEY,
+  StoredAdapterHealth,
   StoredConversationRecord,
+  StoredNavigatorNode,
+  isNavigatorRecordKey,
   makeRecordKey,
   normalizeSettings
 } from "./shared";
 import { getTranslation, LANGUAGE_NAMES } from "./i18n";
+import {
+  CHATGPT_COMPAT_RULES_URL,
+  ChatGptAdapter,
+  ChatGptDomRule,
+  AdapterHealth,
+  createChatGptAdapter,
+  createDefaultAdapterHealth,
+  normalizeCompatRulesPayload
+} from "./chatGptAdapter";
 import "./styles/content.css";
 
 const ROOT_ID = "conversation-navigator-root";
 const ANCHOR_ATTR = "data-conversation-navigator-id";
 const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
+const COMPAT_RULES_STORAGE_KEY = "conversationNavigator:compatRules:v1";
 const SCAN_DEBOUNCE_MS = 650;
 const STREAMING_SCAN_DEBOUNCE_MS = 1400;
 const IDLE_SCAN_TIMEOUT_MS = 1200;
@@ -42,9 +60,6 @@ const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
 const TOKENIZER_TEXT_LIMIT = 12000;
 const TOKEN_BREAKDOWN_NODE_LIMIT = 80;
-const SUPPLEMENTAL_CONTEXT_LIMIT = 8;
-const SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
-const SUPPLEMENTAL_TEXT_LIMIT = 60000;
 const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_HUD_WIDTH = 246;
 const DEFAULT_HUD_GAP = 26;
@@ -73,44 +88,6 @@ const TEXT_IGNORED_CONTAINER_SELECTOR = [
   '[data-testid*="toolbar" i]',
   '[class*="copy" i]',
   '[class*="toolbar" i]'
-].join(",");
-const SUPPLEMENTAL_CONTEXT_SELECTOR = [
-  '[data-testid*="canvas" i]',
-  '[data-testid*="artifact" i]',
-  '[data-testid*="document" i]',
-  '[data-testid*="attachment" i]',
-  '[data-testid*="file" i]',
-  '[aria-label*="canvas" i]',
-  '[aria-label*="artifact" i]',
-  '[aria-label*="document" i]',
-  '[aria-label*="attachment" i]',
-  '[aria-label*="file" i]',
-  '[aria-label*="画布" i]',
-  '[aria-label*="文档" i]',
-  '[aria-label*="附件" i]',
-  '[aria-label*="文件" i]',
-  '[class*="canvas" i]',
-  '[class*="artifact" i]',
-  '[class*="document" i]',
-  '[class*="attachment" i]',
-  '[class*="textLayer" i]',
-  ".ProseMirror",
-  ".cm-content",
-  ".monaco-editor",
-  '[contenteditable="true"]',
-  "[data-page-number]"
-].join(",");
-const SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR = [
-  `#${ROOT_ID}`,
-  'article[data-testid^="conversation-turn"]',
-  '[data-testid^="conversation-turn"]',
-  '[data-message-author-role]',
-  '[data-testid*="composer" i]',
-  '[aria-label*="composer" i]',
-  '[aria-label*="输入" i]',
-  '[aria-label*="發送訊息" i]',
-  '[aria-label*="发送消息" i]',
-  "form"
 ].join(",");
 
 type Role = "user" | "assistant";
@@ -147,6 +124,7 @@ interface NavigatorItem {
   totalTokens: number;
   heatLevel: HeatLevel;
   site: SiteId;
+  mounted: boolean;
 }
 
 interface MessageMapEntry {
@@ -159,11 +137,13 @@ interface MessageMapEntry {
   turnIndex: number;
   favorite: boolean;
   heatLevel: HeatLevel;
+  mounted: boolean;
 }
 
 interface BuildNavigatorResult {
   items: NavigatorItem[];
   mapEntries: MessageMapEntry[];
+  health: AdapterHealth;
 }
 
 interface TokenStats {
@@ -201,6 +181,12 @@ interface StoredModelCatalog {
 }
 
 type ModelSyncStatus = "idle" | "syncing" | "synced" | "failed";
+type CompatRulesSyncStatus = "idle" | "syncing" | "synced" | "failed";
+
+interface StoredCompatRules {
+  updatedAt: number;
+  rules: ChatGptDomRule[];
+}
 
 interface ScheduledIdleWork {
   id: number;
@@ -212,13 +198,6 @@ interface ResizeFrame {
   right: number;
   top: number;
   height: number;
-}
-
-interface SiteAdapter {
-  id: SiteId;
-  label: string;
-  matches: (host: string) => boolean;
-  collect: () => ParsedMessage[];
 }
 
 const anchorRegistry = new Map<string, HTMLElement>();
@@ -289,19 +268,17 @@ const RETIRED_CHATGPT_MODEL_IDS = new Set([
 const NON_CHATGPT_MODEL_PATTERN = /(audio|realtime|transcribe|tts|image|vision|sora|embedding|moderation|codex|computer-use|deep-research|search|davinci|babbage|whisper|dall)/i;
 const MODEL_MODE_ORDER = ["instant", "thinking", "pro", "base"];
 
-const CHATGPT_HOSTS = new Set(["chat.openai.com", "chatgpt.com"]);
+let activeCompatRules: ChatGptDomRule[] = [];
+let activeCompatRulesSource: CompatRulesSource = "built-in";
+let navigationAnimationFrame = 0;
 
-const siteAdapters: SiteAdapter[] = [
-  {
-    id: "chatgpt",
-    label: "ChatGPT",
-    matches: (host) => CHATGPT_HOSTS.has(host),
-    collect: collectChatGptMessages
-  }
-];
+function setActiveCompatRules(rules: ChatGptDomRule[], source: CompatRulesSource) {
+  activeCompatRules = source === "remote" ? rules : [];
+  activeCompatRulesSource = source === "remote" && rules.length > 0 ? "remote" : "built-in";
+}
 
-function getAdapter(): SiteAdapter {
-  return siteAdapters.find((adapter) => adapter.matches(location.hostname)) ?? siteAdapters[0];
+function getAdapter(): ChatGptAdapter {
+  return createChatGptAdapter(activeCompatRules);
 }
 
 function detectPageTheme(): ColorTheme {
@@ -378,6 +355,42 @@ function readPageStorageRecord(pageKey: string): StoredConversationRecord | unde
   }
 }
 
+function readPageStorageRecords(namespace: string): Array<{ key: string; record: StoredConversationRecord }> {
+  const records: Array<{ key: string; record: StoredConversationRecord }> = [];
+
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key || !isNavigatorRecordKey(key, namespace)) {
+        continue;
+      }
+
+      const record = readPageStorageRecord(key);
+      if (record?.schemaVersion === 1 && Array.isArray(record.nodes)) {
+        records.push({ key, record });
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  return records.sort((a, b) => b.record.updatedAt - a.record.updatedAt);
+}
+
+function clearPageStorageRecords(namespace: string): number {
+  const keys = readPageStorageRecords(namespace).map((entry) => entry.key);
+
+  for (const key of keys) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Keep clearing the remaining records even if a single key fails.
+    }
+  }
+
+  return keys.length;
+}
+
 function writePageStorageRecord(pageKey: string, record: StoredConversationRecord): boolean {
   try {
     window.localStorage.setItem(pageKey, JSON.stringify(record));
@@ -387,6 +400,29 @@ function writePageStorageRecord(pageKey: string, record: StoredConversationRecor
     return false;
   }
 }
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== PAGE_CACHE_LIST_MESSAGE && message?.type !== PAGE_CACHE_CLEAR_MESSAGE) {
+    return false;
+  }
+
+  const namespace = typeof message.namespace === "string" && message.namespace.trim()
+    ? message.namespace
+    : DEFAULT_SETTINGS.cacheNamespace;
+
+  try {
+    if (message.type === PAGE_CACHE_CLEAR_MESSAGE) {
+      sendResponse({ ok: true, removed: clearPageStorageRecords(namespace) });
+      return false;
+    }
+
+    sendResponse({ ok: true, records: readPageStorageRecords(namespace) });
+  } catch (error) {
+    sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+
+  return false;
+});
 
 function getThreadWidthRem(widthSetting: number): number {
   return 48 + (widthSetting - THREAD_WIDTH_MIN) * 1.55;
@@ -682,50 +718,6 @@ function extractVisibleText(element: HTMLElement, maxCharacters = Number.POSITIV
   return normalizeText(parts.join(" "));
 }
 
-function isVisibleElement(element: HTMLElement): boolean {
-  if (element.closest(`#${ROOT_ID}`)) {
-    return false;
-  }
-
-  const style = window.getComputedStyle(element);
-  if (style.display === "none" || style.visibility === "hidden") {
-    return false;
-  }
-
-  const rect = element.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
-}
-
-function inferRole(element: HTMLElement): Role | null {
-  const explicitRole = element.getAttribute("data-message-author-role");
-  if (explicitRole === "user" || explicitRole === "assistant") {
-    return explicitRole;
-  }
-
-  const descriptor = [
-    element.tagName,
-    element.id,
-    element.className,
-    element.getAttribute("aria-label"),
-    element.getAttribute("data-testid"),
-    element.getAttribute("data-test-id"),
-    element.getAttribute("role")
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  if (/\b(user|human|prompt|query|request)\b/.test(descriptor)) {
-    return "user";
-  }
-
-  if (/\b(assistant|model|response|answer|chatgpt)\b/.test(descriptor)) {
-    return "assistant";
-  }
-
-  return null;
-}
-
 function sortByDomOrder(messages: ParsedMessage[]): ParsedMessage[] {
   return [...messages].sort((a, b) => {
     if (a.element === b.element) {
@@ -737,79 +729,6 @@ function sortByDomOrder(messages: ParsedMessage[]): ParsedMessage[] {
   });
 }
 
-function compactMessages(messages: ParsedMessage[]): ParsedMessage[] {
-  const compacted: ParsedMessage[] = [];
-
-  for (const message of sortByDomOrder(messages).map((message) => ({
-      ...message,
-      text: normalizeText(message.text)
-    }))) {
-    if (!message.text || message.text.length < 2 || !document.body.contains(message.element)) {
-      continue;
-    }
-
-    const duplicate = compacted.some((existing) => {
-      if (existing.role !== message.role) {
-        return false;
-      }
-
-      if (existing.element === message.element) {
-        return true;
-      }
-
-      const nested = existing.element.contains(message.element) || message.element.contains(existing.element);
-      if (!nested) {
-        return false;
-      }
-
-      return existing.text === message.text || existing.text.includes(message.text) || message.text.includes(existing.text);
-    });
-
-    if (!duplicate) {
-      compacted.push(message);
-    }
-  }
-
-  return compacted;
-}
-
-function collectChatGptMessages(): ParsedMessage[] {
-  const messages: ParsedMessage[] = [];
-  const usedRoots = new Set<HTMLElement>();
-
-  for (const roleNode of safeQueryAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')) {
-    const role = inferRole(roleNode);
-    if (!role) {
-      continue;
-    }
-
-    const root =
-      roleNode.closest<HTMLElement>('article[data-testid^="conversation-turn"]') ??
-      roleNode.closest<HTMLElement>('[data-testid^="conversation-turn"]') ??
-      roleNode;
-    const text = extractVisibleText(roleNode) || extractVisibleText(root);
-
-    if (text) {
-      messages.push({ role, element: role === "user" ? root : roleNode, text });
-      usedRoots.add(root);
-    }
-  }
-
-  for (const article of safeQueryAll('article[data-testid^="conversation-turn"]')) {
-    if (usedRoots.has(article)) {
-      continue;
-    }
-
-    const role = inferRole(article);
-    const text = extractVisibleText(article);
-    if (role && text) {
-      messages.push({ role, element: article, text });
-    }
-  }
-
-  return compactMessages(messages);
-}
-
 function stableHash(value: string): string {
   let hash = 5381;
   for (let index = 0; index < value.length; index += 1) {
@@ -817,118 +736,6 @@ function stableHash(value: string): string {
   }
 
   return (hash >>> 0).toString(36);
-}
-
-function isSupplementalContextCandidate(element: HTMLElement): boolean {
-  const tagName = element.tagName.toLowerCase();
-  if (tagName === "html" || tagName === "body" || tagName === "main") {
-    return false;
-  }
-
-  if (!isVisibleElement(element) || element.closest(SUPPLEMENTAL_CONTEXT_EXCLUDED_SELECTOR)) {
-    return false;
-  }
-
-  const rect = element.getBoundingClientRect();
-  if (rect.width < 40 || rect.height < 12) {
-    return false;
-  }
-
-  return true;
-}
-
-function sortSupplementalContexts(contexts: SupplementalContext[]): SupplementalContext[] {
-  return [...contexts].sort((a, b) => {
-    if (a.element === b.element) {
-      return 0;
-    }
-
-    const position = a.element.compareDocumentPosition(b.element);
-    return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
-  });
-}
-
-function compactSupplementalContexts(contexts: SupplementalContext[]): SupplementalContext[] {
-  const compacted: SupplementalContext[] = [];
-  const seenText = new Set<string>();
-
-  for (const context of sortSupplementalContexts(contexts).map((context) => ({
-      ...context,
-      text: normalizeText(context.text)
-    }))) {
-    if (!context.text || context.text.length < 4 || !document.body.contains(context.element)) {
-      continue;
-    }
-
-    const textKey = stableHash(`${context.kind}:${context.text}`);
-    if (seenText.has(textKey)) {
-      continue;
-    }
-
-    let shouldAdd = true;
-    for (let index = 0; index < compacted.length; index += 1) {
-      const existing = compacted[index];
-      const nested = existing.element.contains(context.element) || context.element.contains(existing.element);
-      const overlappingText =
-        existing.text === context.text || existing.text.includes(context.text) || context.text.includes(existing.text);
-
-      if (!nested && !overlappingText) {
-        continue;
-      }
-
-      if (context.text.length > existing.text.length && context.element.contains(existing.element)) {
-        compacted[index] = context;
-      }
-
-      shouldAdd = false;
-      break;
-    }
-
-    if (shouldAdd) {
-      compacted.push(context);
-      seenText.add(textKey);
-    }
-  }
-
-  return compacted;
-}
-
-function inferSupplementalContextKind(element: HTMLElement): SupplementalContext["kind"] {
-  const descriptor = [
-    element.id,
-    element.className,
-    element.getAttribute("aria-label"),
-    element.getAttribute("data-testid"),
-    element.getAttribute("data-test-id")
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return /(canvas|artifact|画布|prosemirror|cm-content|monaco)/i.test(descriptor) ? "canvas" : "file";
-}
-
-function collectSupplementalContexts(): SupplementalContext[] {
-  const contexts: SupplementalContext[] = [];
-
-  for (const element of safeQueryAll(SUPPLEMENTAL_CONTEXT_SELECTOR).slice(0, SUPPLEMENTAL_CANDIDATE_LIMIT)) {
-    if (!isSupplementalContextCandidate(element)) {
-      continue;
-    }
-
-    const text = extractVisibleText(element, SUPPLEMENTAL_TEXT_LIMIT);
-    if (!text || /^(copy|copied|download|open|close|share|复制|已复制|下载|打开|关闭|分享)$/i.test(text)) {
-      continue;
-    }
-
-    contexts.push({
-      kind: inferSupplementalContextKind(element),
-      element,
-      text
-    });
-  }
-
-  return compactSupplementalContexts(contexts).slice(0, SUPPLEMENTAL_CONTEXT_LIMIT);
 }
 
 function getTokenizer(): Tiktoken {
@@ -1044,6 +851,7 @@ function getNativeMessageKey(element: HTMLElement): string | null {
   addCandidate(element);
   addCandidate(element.querySelector<HTMLElement>("[data-message-id]"));
   addCandidate(element.querySelector<HTMLElement>("[data-turn-id]"));
+  addCandidate(element.querySelector<HTMLElement>("img, picture, canvas, video"));
   addCandidate(element.querySelector<HTMLElement>('article[data-testid^="conversation-turn"]'));
   addCandidate(element.querySelector<HTMLElement>('[data-testid^="conversation-turn"]'));
   addCandidate(element.closest<HTMLElement>("[data-message-id]"));
@@ -1065,13 +873,20 @@ function getNativeMessageKey(element: HTMLElement): string | null {
     }
 
     const testId = candidate.getAttribute("data-testid")?.trim();
-    if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file)\b/i.test(testId)) {
+    if (testId && /\b(message|conversation-turn|turn|canvas|artifact|document|attachment|file|image|media|picture)\b/i.test(testId)) {
       return `data-testid:${testId}`;
     }
 
     const id = candidate.id.trim();
-    if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file)\b/i.test(id)) {
+    if (id && /\b(message|conversation|turn|canvas|artifact|document|attachment|file|image|media|picture)\b/i.test(id)) {
       return `id:${id}`;
+    }
+
+    if (candidate instanceof HTMLImageElement) {
+      const source = candidate.currentSrc || candidate.src;
+      if (source) {
+        return `image-src:${stableHash(source)}`;
+      }
     }
   }
 
@@ -1090,39 +905,31 @@ function getNodeSessionAnchorId(element: HTMLElement): string {
   return id;
 }
 
-function getStableAnchorId(message: ParsedMessage): string {
-  const nativeKey = getNativeMessageKey(message.element);
-  if (nativeKey) {
-    const id = `cnav-msg-${stableHash(`${location.hostname}:${location.pathname}:${message.role}:${nativeKey}`)}`;
-    message.element.setAttribute(ANCHOR_ATTR, id);
-    return id;
-  }
-
-  const existing = message.element.getAttribute(ANCHOR_ATTR);
-  if (existing) {
-    return existing;
-  }
-
-  const id = getNodeSessionAnchorId(message.element);
-  message.element.setAttribute(ANCHOR_ATTR, id);
-  return id;
+function getMessageAnchorElement(element: HTMLElement): HTMLElement {
+  return (
+    element.closest<HTMLElement>('article[data-testid^="conversation-turn"]') ??
+    element.closest<HTMLElement>('[data-testid^="conversation-turn"]') ??
+    element.closest<HTMLElement>("[data-message-author-role]") ??
+    element
+  );
 }
 
-function getSupplementalContextAnchorId(context: SupplementalContext): string {
-  const nativeKey = getNativeMessageKey(context.element);
+function getStableAnchorId(message: ParsedMessage): string {
+  const anchorElement = getMessageAnchorElement(message.element);
+  const nativeKey = getNativeMessageKey(anchorElement);
   if (nativeKey) {
-    const id = `cnav-context-${stableHash(`${location.hostname}:${location.pathname}:${context.kind}:${nativeKey}`)}`;
-    context.element.setAttribute(ANCHOR_ATTR, id);
+    const id = `cnav-msg-${stableHash(`${location.hostname}:${location.pathname}:${message.role}:${nativeKey}`)}`;
+    anchorElement.setAttribute(ANCHOR_ATTR, id);
     return id;
   }
 
-  const existing = context.element.getAttribute(ANCHOR_ATTR);
+  const existing = anchorElement.getAttribute(ANCHOR_ATTR);
   if (existing) {
     return existing;
   }
 
-  const id = getNodeSessionAnchorId(context.element).replace("cnav-node", `cnav-context-${context.kind}`);
-  context.element.setAttribute(ANCHOR_ATTR, id);
+  const id = getNodeSessionAnchorId(anchorElement);
+  anchorElement.setAttribute(ANCHOR_ATTR, id);
   return id;
 }
 
@@ -1149,13 +956,45 @@ function summarizeAnswer(text: string): string {
   return compactPreview(normalized, 180);
 }
 
+function formatSupplementalContextText(context: SupplementalContext): string {
+  const text = normalizeText(context.text);
+  if (!text) {
+    return context.kind === "canvas" ? "画布内容" : "图片内容";
+  }
+
+  if (/^(图片内容|圖片內容|画布内容|畫布內容|附件内容|附件內容)$/i.test(text)) {
+    return text;
+  }
+
+  return context.kind === "canvas" ? `画布内容：${text}` : `附件内容：${text}`;
+}
+
+function isContextCoveredByMessage(context: SupplementalContext, messages: ParsedMessage[]): boolean {
+  return messages.some((message) => {
+    if (message.element === context.element) {
+      return true;
+    }
+
+    return message.element.contains(context.element) || context.element.contains(message.element);
+  });
+}
+
 function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorResult {
   const adapter = getAdapter();
-  const messages = adapter.collect();
+  const collection = adapter.collect();
+  const contextMessages: ParsedMessage[] = collection.supplementalContexts
+    .filter((context) => !isContextCoveredByMessage(context, collection.messages))
+    .map((context) => ({
+      role: "assistant",
+      element: context.element,
+      text: formatSupplementalContextText(context)
+    }));
+  const messages = sortByDomOrder([...collection.messages, ...contextMessages]);
   const items: NavigatorItem[] = [];
   const mapEntries: MessageMapEntry[] = [];
   const messageIds: string[] = [];
   const tokenBreakdowns: TokenBreakdown[] = [];
+  const standaloneAssistantIds = new Set<string>();
   anchorRegistry.clear();
 
   for (let index = 0; index < messages.length; index += 1) {
@@ -1165,10 +1004,11 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
 
     messageIds.push(id);
     tokenBreakdowns.push(tokenBreakdown);
-    anchorRegistry.set(id, message.element);
+    anchorRegistry.set(id, getMessageAnchorElement(message.element));
   }
 
   let cumulativeTokens = 0;
+  let seenUserMessage = false;
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     const id = messageIds[index];
@@ -1176,6 +1016,36 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
     cumulativeTokens += tokenBreakdown.total;
 
     if (message.role !== "user") {
+      if (!seenUserMessage && !standaloneAssistantIds.has(id)) {
+        const answerParts: string[] = [];
+        let answerTokens = 0;
+        for (let nextIndex = index; nextIndex < messages.length; nextIndex += 1) {
+          const nextMessage = messages[nextIndex];
+          if (nextMessage.role === "user") {
+            break;
+          }
+
+          answerParts.push(nextMessage.text);
+          answerTokens += tokenBreakdowns[nextIndex]?.total ?? 0;
+          standaloneAssistantIds.add(messageIds[nextIndex]);
+        }
+
+        const totalTokens = answerTokens || tokenBreakdown.total;
+        items.push({
+          id,
+          promptPreview: compactPreview(message.text, 112),
+          answerSummary: summarizeAnswer(answerParts.join("\n\n")),
+          turnIndex: items.length + 1,
+          favorite: Boolean(favorites[id]),
+          promptTokens: 0,
+          answerTokens: totalTokens,
+          totalTokens,
+          heatLevel: getHeatLevel(totalTokens, cumulativeTokens + totalTokens, tokenBudget),
+          site: adapter.id,
+          mounted: true
+        });
+      }
+
       mapEntries.push({
         id,
         role: message.role,
@@ -1185,11 +1055,13 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
         text: message.text,
         turnIndex: Math.max(1, items.length),
         favorite: false,
-        heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
+        heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget),
+        mounted: true
       });
       continue;
     }
 
+    seenUserMessage = true;
     const answerParts: string[] = [];
     let answerTokens = 0;
     for (let nextIndex = index + 1; nextIndex < messages.length; nextIndex += 1) {
@@ -1216,7 +1088,8 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       answerTokens,
       totalTokens,
       heatLevel,
-      site: adapter.id
+      site: adapter.id,
+      mounted: true
     });
 
     mapEntries.push({
@@ -1228,48 +1101,467 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       text: message.text,
       turnIndex: items.length,
       favorite,
-      heatLevel
+      heatLevel,
+      mounted: true
     });
   }
 
-  for (const context of collectSupplementalContexts()) {
-    const id = getSupplementalContextAnchorId(context);
-    const message: ParsedMessage = {
-      role: "assistant",
-      element: context.element,
-      text: context.text
-    };
-    const tokenBreakdown = getTokenBreakdown(message, id);
-    if (tokenBreakdown.total <= 0) {
-      continue;
+  return {
+    items,
+    mapEntries,
+    health: {
+      ...collection.health,
+      canAnchor: anchorRegistry.size > 0,
+      tokenTextAvailable: mapEntries.some((entry) => entry.tokenCount > 0)
     }
-
-    cumulativeTokens += tokenBreakdown.total;
-    anchorRegistry.set(id, context.element);
-    mapEntries.push({
-      id,
-      role: "assistant",
-      tokenCount: tokenBreakdown.total,
-      codeTokens: tokenBreakdown.code,
-      tableTokens: tokenBreakdown.table,
-      text: `${context.kind === "canvas" ? "Canvas" : "File"} context: ${context.text}`,
-      turnIndex: Math.max(1, items.length),
-      favorite: false,
-      heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget)
-    });
-  }
-
-  return { items, mapEntries };
+  };
 }
 
-function scrollToNavigatorItem(id: string) {
+function getNavigatorItemKey(item: NavigatorItem): string {
+  return stableHash(
+    [
+      normalizeText(item.promptPreview).toLowerCase(),
+      normalizeText(item.answerSummary).toLowerCase(),
+      Math.round(item.promptTokens / 8),
+      Math.round(item.answerTokens / 8)
+    ].join("|")
+  );
+}
+
+function getMapEntryKey(entry: MessageMapEntry): string {
+  return stableHash(
+    [
+      entry.role,
+      normalizeText(entry.text).toLowerCase(),
+      Math.round(entry.tokenCount / 8)
+    ].join("|")
+  );
+}
+
+function applyFavorite(item: NavigatorItem, favorites: Record<string, true>): NavigatorItem {
+  return {
+    ...item,
+    favorite: Boolean(favorites[item.id] || item.favorite)
+  };
+}
+
+function normalizeNavigatorOrder(items: NavigatorItem[]): NavigatorItem[] {
+  return items.map((item, index) => ({
+    ...item,
+    turnIndex: index + 1
+  }));
+}
+
+function mergeNavigatorData(
+  previousItems: NavigatorItem[],
+  previousEntries: MessageMapEntry[],
+  currentItems: NavigatorItem[],
+  currentEntries: MessageMapEntry[],
+  favorites: Record<string, true>,
+  previousScrollY: number
+): Pick<BuildNavigatorResult, "items" | "mapEntries"> {
+  if (previousItems.length === 0) {
+    return {
+      items: normalizeNavigatorOrder(currentItems.map((item) => applyFavorite({ ...item, mounted: true }, favorites))),
+      mapEntries: currentEntries.map((entry) => ({ ...entry, mounted: true }))
+    };
+  }
+
+  const previousById = new Map(previousItems.map((item) => [item.id, item]));
+  const usedPreviousIds = new Set<string>();
+  const currentToMergedId = new Map<string, string>();
+  const replacementByPreviousId = new Map<string, NavigatorItem>();
+  const currentMergedItems: NavigatorItem[] = [];
+  const matchedCurrentIds = new Set<string>();
+
+  const findPreviousMatch = (item: NavigatorItem): NavigatorItem | undefined => {
+    const exact = previousById.get(item.id);
+    if (exact && !usedPreviousIds.has(exact.id)) {
+      return exact;
+    }
+
+    const key = getNavigatorItemKey(item);
+    return previousItems.find((candidate) => !usedPreviousIds.has(candidate.id) && getNavigatorItemKey(candidate) === key);
+  };
+
+  for (const item of currentItems) {
+    const matched = findPreviousMatch(item);
+    const mergedId = matched?.id ?? item.id;
+    const currentAnchor = anchorRegistry.get(item.id);
+    if (currentAnchor) {
+      anchorRegistry.set(mergedId, currentAnchor);
+    }
+
+    currentToMergedId.set(item.id, mergedId);
+    const mergedItem = applyFavorite(
+      {
+        ...(matched ?? item),
+        ...item,
+        id: mergedId,
+        mounted: true
+      },
+      favorites
+    );
+
+    currentMergedItems.push(mergedItem);
+    if (matched) {
+      usedPreviousIds.add(matched.id);
+      matchedCurrentIds.add(mergedId);
+      replacementByPreviousId.set(matched.id, mergedItem);
+    }
+  }
+
+  const result = previousItems.map((item) =>
+    replacementByPreviousId.get(item.id) ?? applyFavorite({ ...item, mounted: false }, favorites)
+  );
+
+  const insertFreshItem = (item: NavigatorItem, currentIndex: number) => {
+    if (result.some((existing) => existing.id === item.id || getNavigatorItemKey(existing) === getNavigatorItemKey(item))) {
+      return;
+    }
+
+    const nextKnown = currentMergedItems.slice(currentIndex + 1).find((candidate) => matchedCurrentIds.has(candidate.id));
+    if (nextKnown) {
+      const nextIndex = result.findIndex((candidate) => candidate.id === nextKnown.id);
+      if (nextIndex >= 0) {
+        result.splice(nextIndex, 0, item);
+        return;
+      }
+    }
+
+    const previousKnown = [...currentMergedItems.slice(0, currentIndex)]
+      .reverse()
+      .find((candidate) => matchedCurrentIds.has(candidate.id));
+    if (previousKnown) {
+      const previousIndex = result.findIndex((candidate) => candidate.id === previousKnown.id);
+      if (previousIndex >= 0) {
+        result.splice(previousIndex + 1, 0, item);
+        return;
+      }
+    }
+
+    if (window.scrollY < previousScrollY) {
+      result.unshift(item);
+      return;
+    }
+
+    result.push(item);
+  };
+
+  currentMergedItems.forEach((item, index) => {
+    if (!matchedCurrentIds.has(item.id)) {
+      insertFreshItem(item, index);
+    }
+  });
+
+  return {
+    items: normalizeNavigatorOrder(result),
+    mapEntries: mergeMapEntries(previousEntries, currentEntries, currentToMergedId, favorites)
+  };
+}
+
+function mergeMapEntries(
+  previousEntries: MessageMapEntry[],
+  currentEntries: MessageMapEntry[],
+  currentToMergedId: Map<string, string>,
+  favorites: Record<string, true>
+): MessageMapEntry[] {
+  const result = previousEntries.map((entry) => ({
+    ...entry,
+    favorite: Boolean(favorites[entry.id] || entry.favorite),
+    mounted: false
+  }));
+
+  const replaceOrAdd = (entry: MessageMapEntry) => {
+    const id = currentToMergedId.get(entry.id) ?? entry.id;
+    const currentAnchor = anchorRegistry.get(entry.id);
+    if (currentAnchor) {
+      anchorRegistry.set(id, currentAnchor);
+    }
+
+    const nextEntry: MessageMapEntry = {
+      ...entry,
+      id,
+      favorite: Boolean(favorites[id] || entry.favorite),
+      mounted: true
+    };
+    const existingIndex = result.findIndex(
+      (candidate) => candidate.id === id || getMapEntryKey(candidate) === getMapEntryKey(nextEntry)
+    );
+
+    if (existingIndex >= 0) {
+      result[existingIndex] = nextEntry;
+      return;
+    }
+
+    result.push(nextEntry);
+  };
+
+  currentEntries.forEach(replaceOrAdd);
+  return result;
+}
+
+function restoreItemsFromRecord(record: StoredConversationRecord | undefined, favorites: Record<string, true>): NavigatorItem[] {
+  if (!record?.nodes.length) {
+    return [];
+  }
+
+  return normalizeNavigatorOrder(record.nodes.map((node) => restoreItemFromNode(node, favorites)));
+}
+
+function restoreItemFromNode(node: StoredNavigatorNode, favorites: Record<string, true>): NavigatorItem {
+  return {
+    id: node.id,
+    promptPreview: node.promptPreview,
+    answerSummary: node.answerSummary,
+    turnIndex: node.turnIndex,
+    favorite: Boolean(favorites[node.id] || node.favorite),
+    promptTokens: node.promptTokens ?? 0,
+    answerTokens: node.answerTokens ?? 0,
+    totalTokens: node.totalTokens ?? (node.promptTokens ?? 0) + (node.answerTokens ?? 0),
+    heatLevel: (node.heatLevel ?? 0) as HeatLevel,
+    site: "chatgpt",
+    mounted: false
+  };
+}
+
+function restoreMapEntriesFromItems(items: NavigatorItem[]): MessageMapEntry[] {
+  return items.map((item) => ({
+    id: item.id,
+    role: "user",
+    tokenCount: item.totalTokens,
+    codeTokens: 0,
+    tableTokens: 0,
+    text: `${item.promptPreview} ${item.answerSummary}`,
+    turnIndex: item.turnIndex,
+    favorite: item.favorite,
+    heatLevel: item.heatLevel,
+    mounted: false
+  }));
+}
+
+function scrollToNavigatorItem(id: string, animate = true) {
   const element = anchorRegistry.get(id) ?? document.querySelector<HTMLElement>(`[${ANCHOR_ATTR}="${id}"]`);
   if (!element) {
     return;
   }
 
-  element.scrollIntoView({ behavior: "smooth", block: "center" });
-  flashAnchor(element);
+  const anchorElement = getMessageAnchorElement(element);
+  jumpToElement(anchorElement, animate);
+  flashAnchor(anchorElement);
+}
+
+function scrollToChatBoundary(edge: "top" | "bottom", animate = true) {
+  const anchors = getConversationAnchorElements();
+  const useAnimation = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (edge === "top") {
+    const firstAnchor = anchors[0];
+    if (firstAnchor) {
+      scrollAnchorToTop(firstAnchor, useAnimation);
+      flashAnchor(firstAnchor);
+      return;
+    }
+
+    scrollWindowTo(0, useAnimation);
+    return;
+  }
+
+  const referenceAnchor = anchors[anchors.length - 1];
+  const scrollContainer = referenceAnchor ? getScrollContainer(referenceAnchor) : window;
+  if (scrollContainer === window) {
+    scrollWindowTo(getDocumentMaxScrollTop(), useAnimation);
+    return;
+  }
+
+  const scrollElement = scrollContainer as HTMLElement;
+  scrollElementTo(scrollElement, Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight), useAnimation);
+}
+
+function scrollAnchorToTop(element: HTMLElement, animate: boolean) {
+  const scrollContainer = getScrollContainer(element);
+
+  if (scrollContainer === window) {
+    const rect = element.getBoundingClientRect();
+    scrollWindowTo(Math.max(0, window.scrollY + rect.top - 92), animate);
+    verifyJump(element, scrollContainer, animate ? 360 : 80);
+    return;
+  }
+
+  const scrollElement = scrollContainer as HTMLElement;
+  const containerRect = scrollElement.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - 18);
+  scrollElementTo(scrollElement, top, animate);
+  verifyJump(element, scrollContainer, animate ? 360 : 80);
+}
+
+function getConversationAnchorElements(): HTMLElement[] {
+  const candidates = Array.from(
+    new Set([
+      ...Array.from(anchorRegistry.values()),
+      ...Array.from(document.querySelectorAll<HTMLElement>(`[${ANCHOR_ATTR}]`))
+    ])
+  )
+    .map(getMessageAnchorElement)
+    .filter(isConversationAnchorElement);
+
+  return sortElementsByDomPosition(Array.from(new Set(candidates)));
+}
+
+function isConversationAnchorElement(element: HTMLElement): boolean {
+  if (!document.body.contains(element) || element.closest(`#${ROOT_ID}`) || !element.closest("main")) {
+    return false;
+  }
+
+  return Boolean(
+    element.matches('article[data-testid^="conversation-turn"], [data-testid^="conversation-turn"], [data-message-author-role]') ||
+      element.querySelector('[data-message-author-role]')
+  );
+}
+
+function sortElementsByDomPosition(elements: HTMLElement[]): HTMLElement[] {
+  return [...elements].sort((a, b) => {
+    if (a === b) {
+      return 0;
+    }
+
+    const position = a.compareDocumentPosition(b);
+    return position & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1;
+  });
+}
+
+function jumpToElement(element: HTMLElement, animate: boolean) {
+  const scrollContainer = getScrollContainer(element);
+  const useAnimation = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (scrollContainer === window) {
+    const rect = element.getBoundingClientRect();
+    const offset = Math.max(92, Math.min(220, (window.innerHeight - Math.min(rect.height, window.innerHeight * 0.7)) / 2));
+    const top = Math.max(0, window.scrollY + rect.top - offset);
+    scrollWindowTo(top, useAnimation);
+    verifyJump(element, scrollContainer, useAnimation ? 360 : 80);
+    return;
+  }
+
+  const scrollElement = scrollContainer as HTMLElement;
+  const containerRect = scrollElement.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  const offset = Math.max(24, Math.min(160, (scrollElement.clientHeight - Math.min(rect.height, scrollElement.clientHeight * 0.7)) / 2));
+  const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - offset);
+  scrollElementTo(scrollElement, top, useAnimation);
+  verifyJump(element, scrollContainer, useAnimation ? 360 : 80);
+}
+
+function scrollWindowTo(top: number, animate: boolean) {
+  if (!animate) {
+    cancelNavigationAnimation();
+    window.scrollTo({ top, behavior: "auto" });
+    return;
+  }
+
+  animateScroll(window.scrollY, top, (value) => window.scrollTo({ top: value, behavior: "auto" }));
+}
+
+function getDocumentMaxScrollTop(): number {
+  const scrollingElement = document.scrollingElement ?? document.documentElement;
+  const scrollHeight = Math.max(
+    0,
+    scrollingElement.scrollHeight,
+    document.documentElement.scrollHeight,
+    document.body.scrollHeight
+  );
+
+  return Math.max(0, scrollHeight - window.innerHeight);
+}
+
+function scrollElementTo(element: HTMLElement, top: number, animate: boolean) {
+  if (!animate) {
+    cancelNavigationAnimation();
+    element.scrollTo({ top, behavior: "auto" });
+    return;
+  }
+
+  animateScroll(element.scrollTop, top, (value) => element.scrollTo({ top: value, behavior: "auto" }));
+}
+
+function animateScroll(from: number, to: number, apply: (value: number) => void) {
+  cancelNavigationAnimation();
+
+  const distance = to - from;
+  if (Math.abs(distance) < 4) {
+    apply(to);
+    return;
+  }
+
+  const start = performance.now();
+  const duration = Math.min(420, Math.max(180, Math.abs(distance) * 0.22));
+  const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
+
+  const step = (now: number) => {
+    const progress = Math.min(1, (now - start) / duration);
+    apply(Math.round(from + distance * easeOutCubic(progress)));
+
+    if (progress < 1) {
+      navigationAnimationFrame = window.requestAnimationFrame(step);
+      return;
+    }
+
+    navigationAnimationFrame = 0;
+    apply(to);
+  };
+
+  navigationAnimationFrame = window.requestAnimationFrame(step);
+}
+
+function cancelNavigationAnimation() {
+  if (!navigationAnimationFrame) {
+    return;
+  }
+
+  window.cancelAnimationFrame(navigationAnimationFrame);
+  navigationAnimationFrame = 0;
+}
+
+function getScrollContainer(element: HTMLElement): HTMLElement | Window {
+  let current = element.parentElement;
+  while (current && current !== document.body && current !== document.documentElement) {
+    const style = window.getComputedStyle(current);
+    const canScroll = /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
+    if (canScroll && current.scrollHeight > current.clientHeight + 4) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return window;
+}
+
+function verifyJump(element: HTMLElement, scrollContainer: HTMLElement | Window, delay = 80) {
+  window.setTimeout(() => {
+    const rect = element.getBoundingClientRect();
+    const topLimit = scrollContainer === window
+      ? 72
+      : (scrollContainer as HTMLElement).getBoundingClientRect().top + 16;
+    const bottomLimit = scrollContainer === window
+      ? window.innerHeight - 96
+      : (scrollContainer as HTMLElement).getBoundingClientRect().bottom - 16;
+
+    if (rect.bottom >= topLimit && rect.top <= bottomLimit) {
+      return;
+    }
+
+    if (scrollContainer === window) {
+      const top = Math.max(0, window.scrollY + rect.top - topLimit);
+      scrollWindowTo(top, false);
+      return;
+    }
+
+    const scrollElement = scrollContainer as HTMLElement;
+    const containerRect = scrollElement.getBoundingClientRect();
+    const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - 16);
+    scrollElementTo(scrollElement, top, false);
+  }, delay);
 }
 
 function flashAnchor(element: HTMLElement) {
@@ -1317,7 +1609,8 @@ function persistRecord(
   settings: NavigatorSettings,
   pageKey: string,
   items: NavigatorItem[],
-  favorites: Record<string, true>
+  favorites: Record<string, true>,
+  health?: AdapterHealth
 ): Promise<boolean> {
   if (settings.cacheMode === "off") {
     return Promise.resolve(true);
@@ -1331,6 +1624,7 @@ function persistRecord(
     title: document.title || getAdapter().label,
     updatedAt: Date.now(),
     favorites,
+    health: health ? toStoredAdapterHealth(health) : undefined,
     nodes: items.map((item) => ({
       id: item.id,
       promptPreview: item.promptPreview,
@@ -1350,6 +1644,19 @@ function persistRecord(
   }
 
   return storageSet({ [pageKey]: record });
+}
+
+function toStoredAdapterHealth(health: AdapterHealth): StoredAdapterHealth {
+  return {
+    status: health.status,
+    reason: health.reason,
+    ruleId: health.ruleId,
+    messageCount: health.messageCount,
+    userCount: health.userCount,
+    assistantCount: health.assistantCount,
+    source: health.source,
+    updatedAt: Date.now()
+  };
 }
 
 function makeRecordSignature(items: NavigatorItem[], favorites: Record<string, true>): string {
@@ -1443,50 +1750,11 @@ function scoreModelCandidate(element: HTMLElement, normalizedLabel: string, rawT
 }
 
 function detectModelLabel(): string {
-  const selectors = [
-    '[data-testid*="model" i]',
-    '[aria-label*="model" i]',
-    '[aria-label*="GPT" i]',
-    "main form button",
-    "form button",
-    "header button",
-    "button",
-    '[role="button"]'
-  ];
-  let best: { label: string; score: number } | null = null;
-
-  for (const selector of selectors) {
-    for (const element of safeQueryAll(selector)) {
-      if (!isVisibleElement(element) || element.closest(`#${ROOT_ID}`)) {
-        continue;
-      }
-
-      const textValues = [
-        element.innerText,
-        element.getAttribute("aria-label"),
-        element.getAttribute("title")
-      ].filter(Boolean) as string[];
-
-      for (const rawText of textValues) {
-        const label = normalizeDetectedChatGptModelLabel(rawText);
-        if (!label) {
-          continue;
-        }
-        const rawNormalized = normalizeText(rawText);
-        const modelishAttributes = `${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`;
-        if (/^Pro$/i.test(rawNormalized) && !element.closest("form, main") && !/model|gpt/i.test(modelishAttributes)) {
-          continue;
-        }
-
-        const score = scoreModelCandidate(element, label, rawText);
-        if (!best || score > best.score) {
-          best = { label, score };
-        }
-      }
-    }
+  try {
+    return getAdapter().detectModelLabel();
+  } catch {
+    return "";
   }
-
-  return best?.label ?? "";
 }
 
 function parseBudgetText(value: string): number | null {
@@ -1747,6 +2015,17 @@ async function fetchTextWithTimeout(url: string, timeoutMs = 8000): Promise<stri
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+async function fetchRemoteCompatRules(): Promise<ChatGptDomRule[]> {
+  const text = await fetchTextWithTimeout(CHATGPT_COMPAT_RULES_URL, 8000);
+  const parsed = JSON.parse(text) as unknown;
+  const rules = normalizeCompatRulesPayload(parsed);
+  if (rules.length === 0) {
+    throw new Error("Remote compatibility rules are empty or invalid");
+  }
+
+  return rules;
 }
 
 function getModelVersion(model: ModelBudgetEntry): { major: number; minor: number } | null {
@@ -2027,7 +2306,13 @@ function ConversationNavigator() {
   const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
   const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
   const [modelSyncStatus, setModelSyncStatus] = useState<ModelSyncStatus>("idle");
+  const [adapterHealth, setAdapterHealth] = useState<AdapterHealth>(() => createDefaultAdapterHealth());
+  const [detectedModelLabel, setDetectedModelLabel] = useState("");
+  const [compatRulesSyncStatus, setCompatRulesSyncStatus] = useState<CompatRulesSyncStatus>("idle");
+  const [compatRuleCount, setCompatRuleCount] = useState(0);
   const favoritesRef = useRef(favorites);
+  const itemsRef = useRef(items);
+  const mapEntriesRef = useRef(mapEntries);
   const pageKeyRef = useRef(pageKey);
   const settingsRef = useRef(settings);
   const modelCatalogRef = useRef(modelCatalog);
@@ -2039,8 +2324,11 @@ function ConversationNavigator() {
   const scanIdleWorkRef = useRef<ScheduledIdleWork | null>(null);
   const scanRunningRef = useRef(false);
   const scanQueuedRef = useRef(false);
+  const lastScanScrollYRef = useRef(window.scrollY);
 
   favoritesRef.current = favorites;
+  itemsRef.current = items;
+  mapEntriesRef.current = mapEntries;
   pageKeyRef.current = pageKey;
   settingsRef.current = settings;
   modelCatalogRef.current = modelCatalog;
@@ -2053,18 +2341,39 @@ function ConversationNavigator() {
 
     scanRunningRef.current = true;
     try {
-      const { budget } = getTokenBudget(settingsRef.current, detectModelLabel(), modelCatalogRef.current);
-      const { items: nextItems, mapEntries: nextMapEntries } = buildNavigatorData(
+      const modelLabel = detectModelLabel();
+      const { budget } = getTokenBudget(settingsRef.current, modelLabel, modelCatalogRef.current);
+      const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData(
         favoritesRef.current,
         budget
       );
-      setItems(nextItems);
-      setMapEntries(nextMapEntries);
-      const nextSignature = makeRecordSignature(nextItems, favoritesRef.current);
+      const merged = mergeNavigatorData(
+        itemsRef.current,
+        mapEntriesRef.current,
+        nextItems,
+        nextMapEntries,
+        favoritesRef.current,
+        lastScanScrollYRef.current
+      );
+      lastScanScrollYRef.current = window.scrollY;
+      itemsRef.current = merged.items;
+      mapEntriesRef.current = merged.mapEntries;
+      setItems(merged.items);
+      setMapEntries(merged.mapEntries);
+      setAdapterHealth(nextHealth);
+      setDetectedModelLabel((current) => (current === modelLabel ? current : modelLabel));
+      const nextSignature = makeRecordSignature(merged.items, favoritesRef.current);
       if (nextSignature !== lastRecordSignatureRef.current) {
         lastRecordSignatureRef.current = nextSignature;
-        await persistRecord(settingsRef.current, pageKeyRef.current, nextItems, favoritesRef.current);
+        await persistRecord(settingsRef.current, pageKeyRef.current, merged.items, favoritesRef.current, nextHealth);
       }
+    } catch (error) {
+      console.warn("[GPT聊天导航器] 扫描当前页面失败，保留上一轮数据：", error);
+      setAdapterHealth((current) => ({
+        ...current,
+        status: current.messageCount > 0 ? "degraded" : "unsupported",
+        reason: error instanceof Error ? error.message : "Scan failed before the page could be indexed."
+      }));
     } finally {
       scanRunningRef.current = false;
       if (scanQueuedRef.current) {
@@ -2131,6 +2440,57 @@ function ConversationNavigator() {
     }
   }, []);
 
+  const syncCompatRules = async () => {
+    setCompatRulesSyncStatus("syncing");
+    try {
+      const rules = await fetchRemoteCompatRules();
+      const updatedAt = Date.now();
+      setActiveCompatRules(rules, "remote");
+      setCompatRuleCount(rules.length);
+      await storageSet({
+        [COMPAT_RULES_STORAGE_KEY]: {
+          updatedAt,
+          rules
+        } satisfies StoredCompatRules
+      });
+      await updateSettings({
+        compatRulesRemoteEnabled: true,
+        compatRulesLastSyncAt: updatedAt,
+        compatRulesSource: "remote"
+      });
+      setCompatRulesSyncStatus("synced");
+      scheduleScan(100);
+    } catch (error) {
+      console.warn("[GPT聊天导航器] 同步 ChatGPT 兼容规则失败：", error);
+      setActiveCompatRules([], "built-in");
+      setCompatRuleCount(0);
+      await updateSettings({
+        compatRulesRemoteEnabled: false,
+        compatRulesSource: "built-in"
+      });
+      setCompatRulesSyncStatus("failed");
+      scheduleScan(100);
+    }
+  };
+
+  const resetCompatRules = async () => {
+    setActiveCompatRules([], "built-in");
+    setCompatRuleCount(0);
+    setCompatRulesSyncStatus("idle");
+    await updateSettings({
+      compatRulesRemoteEnabled: false,
+      compatRulesLastSyncAt: 0,
+      compatRulesSource: "built-in"
+    });
+    await storageSet({
+      [COMPAT_RULES_STORAGE_KEY]: {
+        updatedAt: 0,
+        rules: []
+      } satisfies StoredCompatRules
+    });
+    scheduleScan(100);
+  };
+
   useEffect(() => {
     installRouteEvents();
     let lastHref = location.href;
@@ -2196,6 +2556,46 @@ function ConversationNavigator() {
       cancelIdleWork(catalogSyncWork);
     };
   }, [syncModelCatalog]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompatRules() {
+      if (!settings.compatRulesRemoteEnabled || settings.compatRulesSource !== "remote") {
+        setActiveCompatRules([], "built-in");
+        setCompatRuleCount(0);
+        return;
+      }
+
+      const stored = await storageGet<StoredCompatRules>(COMPAT_RULES_STORAGE_KEY);
+      if (cancelled) {
+        return;
+      }
+
+      const rules = normalizeCompatRulesPayload({
+        schemaVersion: 1,
+        rules: stored?.rules ?? []
+      });
+
+      if (rules.length === 0) {
+        setActiveCompatRules([], "built-in");
+        setCompatRuleCount(0);
+        setCompatRulesSyncStatus("failed");
+        return;
+      }
+
+      setActiveCompatRules(rules, "remote");
+      setCompatRuleCount(rules.length);
+      setCompatRulesSyncStatus("synced");
+      scheduleScan(100);
+    }
+
+    void loadCompatRules();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleScan, settings.compatRulesRemoteEnabled, settings.compatRulesSource]);
 
   useEffect(() => {
     const syncTheme = () => setTheme(detectPageTheme());
@@ -2345,7 +2745,27 @@ function ConversationNavigator() {
         return;
       }
 
-      setFavorites(storedRecord?.favorites ?? {});
+      const nextFavorites = storedRecord?.favorites ?? {};
+      const restoredItems = restoreItemsFromRecord(storedRecord, nextFavorites);
+      const restoredEntries = restoreMapEntriesFromItems(restoredItems);
+      favoritesRef.current = nextFavorites;
+      itemsRef.current = restoredItems;
+      mapEntriesRef.current = restoredEntries;
+      lastRecordSignatureRef.current = makeRecordSignature(restoredItems, nextFavorites);
+      setFavorites(nextFavorites);
+      setItems(restoredItems);
+      setMapEntries(restoredEntries);
+      setAdapterHealth(storedRecord?.health ? {
+        status: storedRecord.health.status,
+        reason: storedRecord.health.reason,
+        ruleId: storedRecord.health.ruleId,
+        messageCount: storedRecord.health.messageCount,
+        userCount: storedRecord.health.userCount,
+        assistantCount: storedRecord.health.assistantCount,
+        canAnchor: false,
+        tokenTextAvailable: restoredEntries.length > 0,
+        source: storedRecord.health.source
+      } : createDefaultAdapterHealth());
     }
 
     loadState();
@@ -2362,6 +2782,8 @@ function ConversationNavigator() {
     modelCatalog,
     pageKey,
     scheduleScan,
+    settings.compatRulesRemoteEnabled,
+    settings.compatRulesSource,
     settings.cacheMode,
     settings.manualTokenBudget,
     settings.tokenBudgetMode,
@@ -2379,16 +2801,26 @@ function ConversationNavigator() {
     };
 
     const observer = new MutationObserver((mutations) => {
-      const relevantMutations = mutations.filter((mutation) => {
-        const element = getMutationElement(mutation);
-        return element && !element.closest(`#${ROOT_ID}`);
-      });
+      let hasRelevantMutation = false;
+      let textOnly = true;
 
-      if (relevantMutations.length === 0) {
+      for (const mutation of mutations) {
+        const element = getMutationElement(mutation);
+        if (!element || element.closest(`#${ROOT_ID}`)) {
+          continue;
+        }
+
+        hasRelevantMutation = true;
+        if (mutation.type !== "characterData") {
+          textOnly = false;
+          break;
+        }
+      }
+
+      if (!hasRelevantMutation) {
         return;
       }
 
-      const textOnly = relevantMutations.every((mutation) => mutation.type === "characterData");
       scheduleScan(textOnly ? STREAMING_SCAN_DEBOUNCE_MS : SCAN_DEBOUNCE_MS);
     });
 
@@ -2469,7 +2901,9 @@ function ConversationNavigator() {
       }
 
       setActiveId(selected);
-      setViewportMetrics(createViewportMetrics(mapEntries));
+      if (settingsRef.current.tokenPanelEnabled) {
+        setViewportMetrics(createViewportMetrics(mapEntries));
+      }
     };
 
     const scheduleViewportUpdate = () => {
@@ -2490,7 +2924,7 @@ function ConversationNavigator() {
       window.removeEventListener("scroll", scheduleViewportUpdate);
       window.removeEventListener("resize", scheduleViewportUpdate);
     };
-  }, [items, mapEntries]);
+  }, [items, mapEntries, settings.tokenPanelEnabled]);
 
   const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -2507,7 +2941,6 @@ function ConversationNavigator() {
     });
   }, [favoritesOnly, items, query]);
 
-  const detectedModelLabel = useMemo(() => detectModelLabel(), [items.length, pageId]);
   const tokenStats = useMemo(
     () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
     [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
@@ -2524,6 +2957,24 @@ function ConversationNavigator() {
         : modelSyncStatus === "failed"
           ? t.tokenModelSyncFailed
           : t.tokenModelSync;
+  const compatSyncLabel =
+    compatRulesSyncStatus === "syncing"
+      ? t.compatRulesSyncing
+      : compatRulesSyncStatus === "synced"
+        ? t.compatRulesSynced
+        : compatRulesSyncStatus === "failed"
+          ? t.compatRulesSyncFailed
+          : t.compatRulesSync;
+  const healthLabel =
+    adapterHealth.status === "ok"
+      ? t.adapterStatusOk
+      : adapterHealth.status === "degraded"
+        ? t.adapterStatusDegraded
+        : t.adapterStatusUnsupported;
+  const compatSourceLabel = activeCompatRulesSource === "remote" ? t.compatRulesRemote : t.compatRulesBuiltIn;
+  const compatLastSyncLabel = settings.compatRulesLastSyncAt
+    ? new Date(settings.compatRulesLastSyncAt).toLocaleString()
+    : t.compatRulesNeverSynced;
   const hudPosition =
     tokenHudDraft ??
     (settings.tokenHudX > 0 || settings.tokenHudY > 0
@@ -2681,13 +3132,17 @@ function ConversationNavigator() {
     }));
 
     setFavorites(nextFavorites);
+    itemsRef.current = nextItems;
     setItems(nextItems);
-    setMapEntries((currentEntries) =>
-      currentEntries.map((entry) =>
+    setMapEntries((currentEntries) => {
+      const nextEntries = currentEntries.map((entry) =>
         entry.id === item.id ? { ...entry, favorite: !itemFavorite } : entry
-      )
-    );
-    await persistRecord(settings, pageKey, nextItems, nextFavorites);
+      );
+      mapEntriesRef.current = nextEntries;
+      return nextEntries;
+    });
+    lastRecordSignatureRef.current = makeRecordSignature(nextItems, nextFavorites);
+    await persistRecord(settings, pageKey, nextItems, nextFavorites, adapterHealth);
   };
 
   const renderTokenPanel = (variant: "hud" | "dock") => {
@@ -2778,6 +3233,7 @@ function ConversationNavigator() {
               <span>{tokenStats.budgetLabel}</span>
               <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
             </div>
+            <div className="cnav-token-scope">{t.tokenVisibleDomOnly}</div>
           </div>
         )}
       </section>
@@ -2817,6 +3273,32 @@ function ConversationNavigator() {
 
       {settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null}
 
+      <div
+        className="cnav-scroll-jump"
+        data-theme={theme}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          className="cnav-scroll-jump-button"
+          type="button"
+          onClick={() => scrollToChatBoundary("top", settings.navigateAnimationEnabled)}
+          title={t.scrollToTop}
+          aria-label={t.scrollToTop}
+        >
+          <ArrowUpToLine size={18} aria-hidden="true" />
+        </button>
+        <button
+          className="cnav-scroll-jump-button"
+          type="button"
+          onClick={() => scrollToChatBoundary("bottom", settings.navigateAnimationEnabled)}
+          title={t.scrollToBottom}
+          aria-label={t.scrollToBottom}
+        >
+          <ArrowDownToLine size={18} aria-hidden="true" />
+        </button>
+      </div>
+
       <aside
         className={`cnav-shell${settings.collapsed ? " is-collapsed" : ""}${isOpening ? " is-opening" : ""}`}
         data-cache-mode={settings.cacheMode}
@@ -2842,6 +3324,12 @@ function ConversationNavigator() {
             <div className="cnav-title-group">
               <span className="cnav-kicker">{adapter.label}</span>
               <h1>{t.appName}</h1>
+              <span
+                className={`cnav-health-badge is-${adapterHealth.status}`}
+                title={`${adapterHealth.reason} · ${adapterHealth.ruleId}`}
+              >
+                {healthLabel}
+              </span>
             </div>
             <div className="cnav-header-actions">
               <button
@@ -3061,6 +3549,16 @@ function ConversationNavigator() {
                 />
               </label>
               <label className="cnav-toggle-field">
+                <span>{t.navigateAnimation}</span>
+                <input
+                  type="checkbox"
+                  checked={settings.navigateAnimationEnabled}
+                  onChange={(event) =>
+                    updateSettings({ navigateAnimationEnabled: event.currentTarget.checked })
+                  }
+                />
+              </label>
+              <label className="cnav-toggle-field">
                 <span>{t.tokenPanel}</span>
                 <input
                   type="checkbox"
@@ -3146,6 +3644,36 @@ function ConversationNavigator() {
                   />
                 </label>
               ) : null}
+              <div className="cnav-display-section-title">{t.compatRules}</div>
+              <div className="cnav-compat-card">
+                <div className="cnav-compat-row">
+                  <span>{t.compatRulesSource}</span>
+                  <strong>{compatSourceLabel}</strong>
+                </div>
+                <div className="cnav-compat-row">
+                  <span>{t.compatRulesActive}</span>
+                  <strong>{adapterHealth.ruleId}</strong>
+                </div>
+                <div className="cnav-compat-row">
+                  <span>{t.compatRulesLastSync}</span>
+                  <strong>{compatLastSyncLabel}</strong>
+                </div>
+                <p>{t.compatRulesNote}</p>
+                <div className="cnav-compat-actions">
+                  <button
+                    className="cnav-sync-button"
+                    type="button"
+                    disabled={compatRulesSyncStatus === "syncing"}
+                    onClick={() => void syncCompatRules()}
+                    title={`${compatRuleCount} ${t.compatRulesCount}`}
+                  >
+                    {compatSyncLabel}
+                  </button>
+                  <button className="cnav-reset-button" type="button" onClick={() => void resetCompatRules()}>
+                    {t.compatRulesReset}
+                  </button>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -3190,21 +3718,22 @@ function ConversationNavigator() {
               ) : (
                 filteredItems.map((item) => (
                   <div
-                    className={`cnav-item${activeId === item.id ? " is-active" : ""} is-heat-${item.heatLevel}`}
+                    className={`cnav-item${activeId === item.id ? " is-active" : ""}${item.mounted ? "" : " is-unmounted"} is-heat-${item.heatLevel}`}
                     key={item.id}
                     role="listitem"
                   >
                     <button
                       className="cnav-item-main"
                       type="button"
-                      onClick={() => scrollToNavigatorItem(item.id)}
+                      onClick={() => scrollToNavigatorItem(item.id, settings.navigateAnimationEnabled)}
+                      title={item.mounted ? undefined : t.nodeUnmounted}
                     >
                       <span className="cnav-item-index">{item.turnIndex}</span>
                       <span className="cnav-item-copy">
                         <span className="cnav-prompt">{item.promptPreview}</span>
                         <span className="cnav-answer">{item.answerSummary}</span>
                         <span className="cnav-token-line">
-                          {`${formatTokenCount(item.totalTokens)} ${t.tokenPanelShort}`}
+                          {`${formatTokenCount(item.totalTokens)} ${t.tokenPanelShort}${item.mounted ? "" : ` · ${t.nodeUnmounted}`}`}
                         </span>
                       </span>
                       <ChevronRight className="cnav-item-arrow" size={15} aria-hidden="true" />
