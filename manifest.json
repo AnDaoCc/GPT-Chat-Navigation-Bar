@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GPT聊天导航器",
   "version": "2026.4.0",
-  "version_name": "2026-V4beta",
+  "version_name": "2026-V4",
   "description": "GPT聊天导航器：为 ChatGPT 增加本地对话导航、Token 估算和显示调节。",
   "permissions": ["storage"],
   "host_permissions": [
