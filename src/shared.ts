@@ -15,7 +15,10 @@ export interface StoredNavigatorNode {
   id: string;
   promptPreview: string;
   answerSummary: string;
+  customTitle?: string;
+  note?: string;
   turnIndex: number;
+  domOrder?: number;
   favorite: boolean;
   promptTokens?: number;
   answerTokens?: number;
@@ -33,6 +36,7 @@ export interface StoredConversationRecord {
   updatedAt: number;
   nodes: StoredNavigatorNode[];
   favorites: Record<string, true>;
+  groupCollapsed?: Record<string, true>;
   health?: StoredAdapterHealth;
 }
 
@@ -60,6 +64,7 @@ export interface NavigatorSettings {
   canvasLineHeight: number;
   chatLayoutVersion: 2;
   chatContentWidth: number;
+  threadResizeEnabled: boolean;
   autoCollapseOnOutsideClick: boolean;
   tokenPanelEnabled: boolean;
   tokenPanelMode: TokenPanelMode;
@@ -88,6 +93,7 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   canvasLineHeight: 155,
   chatLayoutVersion: 2,
   chatContentWidth: 60,
+  threadResizeEnabled: false,
   autoCollapseOnOutsideClick: false,
   tokenPanelEnabled: true,
   tokenPanelMode: "floating",
@@ -145,6 +151,7 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     canvasLineHeight: clampNumber(value?.canvasLineHeight, 120, 230, 155),
     chatLayoutVersion: 2,
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
+    threadResizeEnabled: Boolean(value?.threadResizeEnabled),
     autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
     tokenPanelEnabled: value?.tokenPanelEnabled !== false,
     tokenPanelMode,

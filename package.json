@@ -1,6 +1,6 @@
 {
   "name": "gpt-chat-navigator-extension",
-  "version": "2026.4.0",
+  "version": "2026.6.0",
   "private": true,
   "type": "module",
   "description": "GPT聊天导航器：本地增强 ChatGPT 对话导航、Token 估算和阅读显示。",

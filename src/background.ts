@@ -13,6 +13,7 @@ const MODEL_SYNC_ALLOWED_URLS = [
   "https://raw.githubusercontent.com/AnDaoCc/GPT-Chat-Navigation-Bar/main/compat/chatgpt-dom-rules.json",
   "https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-55-in-chatgpt",
   "https://help.openai.com/en/articles/6825453-chatgpt-release-notes",
+  "https://developers.openai.com/api/docs/models",
   "https://openai.com/index/gpt-5-5-instant/",
   "https://openai.com/index/introducing-gpt-5-5/",
   "https://platform.openai.com/docs/deprecations",

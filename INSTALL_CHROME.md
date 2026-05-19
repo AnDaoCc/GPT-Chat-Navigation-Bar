@@ -1,26 +1,57 @@
-# Google Chrome Installation
+# Chrome 安装指南
 
-If Chrome shows "This extension is not listed in the Chrome Web Store", the extension code is not the cause. That warning is Chrome blocking a local `.crx` install because it did not come from the Chrome Web Store.
+Chrome 稳定版可能会阻止直接拖拽安装本地 `.crx` 文件，并提示“此扩展程序未列在 Chrome 网上应用店中”。这属于 Chrome 的安装策略限制，不代表插件代码有问题。
 
-Use this local development install path instead:
+推荐使用“加载已解压的扩展程序”方式安装。
 
-1. Open `chrome://extensions`.
-2. Turn on Developer mode.
-3. Click "Load unpacked".
-4. Select this folder:
+## 安装步骤
 
-```text
-C:\Users\zhang\Desktop\GPT插件\release\conversation-navigator-unpacked
-```
-
-You can also select:
+1. 打开 Chrome 扩展管理页：
 
 ```text
-C:\Users\zhang\Desktop\GPT插件\dist
+chrome://extensions
 ```
 
-The `.crx` file is still generated for Chromium builds or environments that allow local CRX installation. Google Chrome Stable may disable it by policy.
+2. 打开右上角“开发者模式”。
+3. 点击“加载已解压的扩展程序”。
+4. 选择打包后的目录：
 
-## Why Not Drag-To-Install CRX?
+```text
+D:\APPKF\GPT聊天导航\release\conversation-navigator-unpacked
+```
 
-Chrome Stable restricts off-store extension installation. For private local use, "Load unpacked" is the supported path. For normal one-click installation in Chrome, the extension must be published through the Chrome Web Store or installed by managed enterprise policy.
+5. 打开或刷新 ChatGPT 页面。
+
+## 开发模式
+
+如果你正在开发或调试，也可以直接加载构建目录：
+
+```text
+D:\APPKF\GPT聊天导航\dist
+```
+
+每次修改源码后执行：
+
+```bash
+npm run build
+```
+
+然后在 `chrome://extensions` 中点击该插件的刷新按钮。
+
+## 打包命令
+
+```bash
+npm install
+npm run package
+```
+
+打包后会生成：
+
+- `release/conversation-navigator-unpacked/`：推荐加载的目录。
+- `release/conversation-navigator-unpacked.zip`：已解压目录的压缩包。
+- `release/conversation-navigator.zip`：发布用压缩包。
+- `release/conversation-navigator.crx`：如果本机 Chrome 支持命令行打包则生成。
+
+## 关于 CRX
+
+本地 `.crx` 更适合 Chromium 系浏览器、企业策略安装或测试环境。普通 Chrome 稳定版个人用户建议始终使用“加载已解压的扩展程序”。
