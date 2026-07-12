@@ -16,8 +16,8 @@ async function copyStaticFiles() {
 const commonOptions = {
   bundle: true,
   logLevel: "info",
-  minify: false,
-  sourcemap: true,
+  minify: !watch,
+  sourcemap: watch,
   target: ["chrome114"],
   define: {
     "process.env.NODE_ENV": '"production"'

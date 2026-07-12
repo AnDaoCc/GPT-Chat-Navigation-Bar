@@ -1,26 +1,30 @@
 {
   "name": "gpt-chat-navigator-extension",
-  "version": "2026.6.0",
+  "version": "2026.8.4",
   "private": true,
   "type": "module",
-  "description": "GPT聊天导航器：本地增强 ChatGPT 对话导航、Token 估算和阅读显示。",
+  "description": "GPT页面增强工具：本地增强 ChatGPT 阅读显示、Token 估算、文档导出、素材收藏和复制工具。",
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "package": "npm run build && powershell -ExecutionPolicy Bypass -File scripts/package.ps1"
   },
   "dependencies": {
     "js-tiktoken": "^1.0.21",
     "lucide-react": "^0.468.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",
     "@types/react": "^18.2.79",
     "@types/react-dom": "^18.2.25",
-    "esbuild": "^0.28.0",
-    "typescript": "^5.4.5"
+    "@types/jsdom": "^21.1.7",
+    "esbuild": "^0.28.1",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   }
 }

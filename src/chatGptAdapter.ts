@@ -69,6 +69,35 @@ const SUPPLEMENTAL_CONTEXT_LIMIT = 8;
 const SUPPLEMENTAL_CANDIDATE_LIMIT = 80;
 const SUPPLEMENTAL_TEXT_LIMIT = 60000;
 
+const CHATGPT_ROLE_ATTRIBUTES = [
+  "data-message-author-role",
+  "data-author-role",
+  "data-author",
+  "data-role",
+  "data-turn"
+] as const;
+
+export const CHATGPT_MESSAGE_NODE_SELECTOR = [
+  "[data-message-author-role]",
+  "[data-author-role]",
+  '[data-author="user"]',
+  '[data-author="assistant"]',
+  '[data-role="user"]',
+  '[data-role="assistant"]',
+  '[data-turn="user"]',
+  '[data-turn="assistant"]',
+  '[data-testid="user-message"]',
+  '[data-testid="assistant-message"]'
+].join(",");
+
+export const CHATGPT_TURN_NODE_SELECTOR = [
+  'article[data-testid*="conversation-turn" i]',
+  '[data-testid*="conversation-turn" i]',
+  "[data-turn-id]",
+  "[data-message-id]",
+  CHATGPT_MESSAGE_NODE_SELECTOR
+].join(",");
+
 export const CHATGPT_COMPAT_RULES_URL =
   "https://raw.githubusercontent.com/AnDaoCc/GPT-Chat-Navigation-Bar/main/compat/chatgpt-dom-rules.json";
 
@@ -101,17 +130,35 @@ const DEFAULT_TEXT_IGNORED_SELECTORS = [
 ];
 
 const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
-  id: "chatgpt-current-2026",
+  id: "chatgpt-current-2026-07",
   label: "ChatGPT current DOM",
   priority: 100,
   source: "built-in",
   messageSelectors: [
-    '[data-message-author-role="user"]',
-    '[data-message-author-role="assistant"]'
+    'main [data-message-author-role="user"]',
+    'main [data-message-author-role="assistant"]',
+    'main [data-author-role="user"]',
+    'main [data-author-role="assistant"]',
+    'main [data-author="user"]',
+    'main [data-author="assistant"]',
+    'main [data-role="user"]',
+    'main [data-role="assistant"]',
+    'main [data-turn="user"]',
+    'main [data-turn="assistant"]',
+    'main [data-testid="user-message"]',
+    'main [data-testid="assistant-message"]'
   ],
   turnSelectors: [
-    'article[data-testid^="conversation-turn"]',
-    '[data-testid^="conversation-turn"]'
+    'main article[data-testid*="conversation-turn" i]',
+    'main [data-testid*="conversation-turn" i]',
+    "main [data-turn-id]",
+    "main [data-message-id]",
+    'main [data-testid*="conversation" i]',
+    'main [data-testid*="message" i]',
+    'main [role="article"]',
+    'main [data-message-author-role]',
+    'article[data-testid*="conversation-turn" i]',
+    '[data-testid*="conversation-turn" i]'
   ],
   modelSelectors: [
     '[data-testid*="model" i]',
@@ -127,6 +174,8 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
     '[data-testid*="canvas" i]',
     '[data-testid*="artifact" i]',
     '[data-testid*="document" i]',
+    '[data-testid*="doc" i]',
+    '[data-testid*="editor" i]',
     '[data-testid*="attachment" i]',
     '[data-testid*="file" i]',
     '[data-testid*="image" i]',
@@ -135,6 +184,7 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
     '[aria-label*="canvas" i]',
     '[aria-label*="artifact" i]',
     '[aria-label*="document" i]',
+    '[aria-label*="doc" i]',
     '[aria-label*="attachment" i]',
     '[aria-label*="file" i]',
     '[aria-label*="image" i]',
@@ -148,6 +198,8 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
     '[class*="canvas" i]',
     '[class*="artifact" i]',
     '[class*="document" i]',
+    '[class*="doc-" i]',
+    '[class*="editor" i]',
     '[class*="attachment" i]',
     '[class*="generated-image" i]',
     '[class*="image" i]',
@@ -155,14 +207,21 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
     ".ProseMirror",
     ".cm-content",
     ".monaco-editor",
+    '[data-lexical-editor="true"]',
     '[contenteditable="true"]',
+    '[role="document"]',
     "[data-page-number]"
   ],
   supplementalExcludeSelectors: [
     `#${ROOT_ID}`,
-    'article[data-testid^="conversation-turn"]',
-    '[data-testid^="conversation-turn"]',
-    '[data-message-author-role]',
+    "aside",
+    "nav",
+    "header",
+    '[role="navigation"]',
+    '[data-testid*="sidebar" i]',
+    'article[data-testid*="conversation-turn" i]',
+    '[data-testid*="conversation-turn" i]',
+    CHATGPT_TURN_NODE_SELECTOR,
     '[data-testid*="composer" i]',
     '[aria-label*="composer" i]',
     '[aria-label*="输入" i]',
@@ -184,10 +243,21 @@ const GENERIC_CHATGPT_RULE: ChatGptDomRule = {
   priority: 10,
   messageSelectors: [],
   turnSelectors: [
+    "main [data-message-author-role]",
+    "main [data-author-role]",
+    'main [data-author="user"]',
+    'main [data-author="assistant"]',
+    'main [data-role="user"]',
+    'main [data-role="assistant"]',
+    'main [data-turn="user"]',
+    'main [data-turn="assistant"]',
+    "main [data-turn-id]",
+    "main [data-message-id]",
     "main article",
     "main [role='article']",
     'main [data-testid*="turn" i]',
     'main [data-testid*="conversation" i]',
+    'main [data-testid*="message" i]',
     'main [class*="message" i]'
   ],
   fallbackRoleByOrder: true
@@ -276,7 +346,6 @@ function getOrderedRules(remoteRules: ChatGptDomRule[]): ChatGptDomRule[] {
 }
 
 function collectWithRules(rules: ChatGptDomRule[]): ChatGptCollectResult {
-  let best: InternalCollectResult | null = null;
   const results: InternalCollectResult[] = [];
 
   for (const rule of rules) {
@@ -286,16 +355,38 @@ function collectWithRules(rules: ChatGptDomRule[]): ChatGptCollectResult {
     }
 
     results.push(result);
-    if (!best || getCollectScore(result) > getCollectScore(best)) {
-      best = result;
-    }
   }
+
+  if (results.length === 0) {
+    return {
+      messages: [],
+      supplementalContexts: [],
+      health: createDefaultAdapterHealth("No visible ChatGPT conversation messages were recognized.")
+    };
+  }
+
+  const builtInResults = results.filter((result) => result.rule.source === "built-in");
+  const remoteResults = results.filter((result) => result.rule.source === "remote");
+  const bestBuiltIn = pickBestCollectResult(builtInResults);
+  const bestRemote = pickBestCollectResult(remoteResults);
+  const builtInHealthy = Boolean(
+    bestBuiltIn &&
+    bestBuiltIn.rule.id === CURRENT_CHATGPT_RULE.id &&
+    !bestBuiltIn.usedFallbackRoles &&
+    bestBuiltIn.userCount > 0 &&
+    bestBuiltIn.assistantCount > 0
+  );
+  const best = builtInHealthy
+    ? bestBuiltIn
+    : bestRemote && (!bestBuiltIn || getRuleContentScore(bestRemote) > getRuleContentScore(bestBuiltIn))
+      ? bestRemote
+      : bestBuiltIn ?? bestRemote;
 
   if (!best) {
     return {
       messages: [],
       supplementalContexts: [],
-      health: createDefaultAdapterHealth("No visible ChatGPT conversation messages were recognized.")
+      health: createDefaultAdapterHealth("No usable ChatGPT compatibility rule was found.")
     };
   }
 
@@ -307,6 +398,24 @@ function collectWithRules(rules: ChatGptDomRule[]): ChatGptCollectResult {
     supplementalContexts,
     health
   };
+}
+
+function pickBestCollectResult(results: InternalCollectResult[]): InternalCollectResult | null {
+  return results.reduce<InternalCollectResult | null>(
+    (best, result) => !best || getRuleContentScore(result) > getRuleContentScore(best) ? result : best,
+    null
+  );
+}
+
+function getRuleContentScore(result: InternalCollectResult): number {
+  const roleCompleteness = result.userCount > 0 && result.assistantCount > 0 ? 80 : 0;
+  return (
+    roleCompleteness +
+    result.messages.length * 4 +
+    result.userCount * 8 +
+    result.assistantCount * 6 -
+    (result.usedFallbackRoles ? 24 : 0)
+  );
 }
 
 interface InternalCollectResult {
@@ -509,7 +618,7 @@ function isVisualMessage(message: ParsedMessage): boolean {
 }
 
 function hasExplicitRoleMarker(element: HTMLElement): boolean {
-  return Boolean(element.closest("[data-message-author-role]") || element.querySelector("[data-message-author-role]"));
+  return Boolean(element.closest(CHATGPT_MESSAGE_NODE_SELECTOR) || element.querySelector(CHATGPT_MESSAGE_NODE_SELECTOR));
 }
 
 function isDuplicateMessage(existing: ParsedMessage, candidate: ParsedMessage): boolean {
@@ -603,9 +712,41 @@ function getMessageRoot(element: HTMLElement, rule: ChatGptDomRule): HTMLElement
 }
 
 function inferRole(element: HTMLElement, rule: ChatGptDomRule): AdapterRole | null {
-  const explicitRole = element.getAttribute("data-message-author-role");
-  if (explicitRole === "user" || explicitRole === "assistant") {
-    return explicitRole;
+  const explicitRoles = new Set<AdapterRole>();
+  const collectExplicitRole = (candidate: HTMLElement | null) => {
+    if (!candidate) {
+      return;
+    }
+
+    for (const attribute of CHATGPT_ROLE_ATTRIBUTES) {
+      const value = candidate.getAttribute(attribute)?.trim().toLowerCase();
+      if (value === "user" || value === "assistant") {
+        explicitRoles.add(value);
+      }
+    }
+
+    const testId = candidate.getAttribute("data-testid")?.trim().toLowerCase();
+    if (testId === "user-message") {
+      explicitRoles.add("user");
+    } else if (testId === "assistant-message") {
+      explicitRoles.add("assistant");
+    }
+  };
+
+  collectExplicitRole(element);
+  collectExplicitRole(element.closest<HTMLElement>(CHATGPT_MESSAGE_NODE_SELECTOR));
+  for (const candidate of safeQueryAll(CHATGPT_MESSAGE_NODE_SELECTOR, element)) {
+    collectExplicitRole(candidate);
+    if (explicitRoles.size > 1) {
+      break;
+    }
+  }
+
+  if (explicitRoles.size === 1) {
+    return Array.from(explicitRoles)[0];
+  }
+  if (explicitRoles.size > 1) {
+    return null;
   }
 
   const descriptor = getElementDescriptor(element);
@@ -631,6 +772,13 @@ function getElementDescriptor(element: HTMLElement): string {
     element.getAttribute("alt"),
     element.getAttribute("data-testid"),
     element.getAttribute("data-test-id"),
+    element.getAttribute("data-message-author-role"),
+    element.getAttribute("data-author-role"),
+    element.getAttribute("data-author"),
+    element.getAttribute("data-role"),
+    element.getAttribute("data-turn"),
+    element.getAttribute("data-turn-id"),
+    element.getAttribute("data-message-id"),
     element.getAttribute("role")
   ]
     .filter(Boolean)

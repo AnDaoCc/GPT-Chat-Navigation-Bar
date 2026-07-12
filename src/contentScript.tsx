@@ -7,56 +7,79 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
   Copy,
   FileText,
   GripVertical,
   Minimize2,
-  MoveHorizontal,
-  PanelRightClose,
-  PanelRightOpen,
-  RefreshCw,
-  Search,
-  Star,
   Table2
 } from "lucide-react";
-import { Tiktoken } from "js-tiktoken/lite";
-import o200kBase from "js-tiktoken/ranks/o200k_base";
 import {
   AppLanguage,
   CompatRulesSource,
   DEFAULT_SETTINGS,
+  EXPORT_SNAPSHOT_MESSAGE,
+  ExportChatMessage,
+  ExportCodeBlock,
+  ExportNavigatorNode,
+  ExportSnapshot,
+  MATERIALS_LIST_MESSAGE,
   NavigatorSettings,
-  PAGE_CACHE_CLEAR_MESSAGE,
-  PAGE_CACHE_LIST_MESSAGE,
+  PAGE_STATUS_MESSAGE,
+  PageAdapterHealth,
+  PageMaterial,
+  SELECTION_GET_MESSAGE,
   STORAGE_SETTINGS_KEY,
-  StoredAdapterHealth,
-  StoredConversationRecord,
-  StoredNavigatorNode,
-  isNavigatorRecordKey,
-  makeRecordKey,
+  TOKEN_COUNT_BATCH_MESSAGE,
+  TokenCountBatchResponse,
+  SelectionMaterial,
+  isLegacyConversationRecord,
   normalizeSettings
 } from "./shared";
 import { getTranslation } from "./i18n";
+import { approximateTokenCount } from "./tokenApprox";
 import {
-  CHATGPT_COMPAT_RULES_URL,
+  buildConversationSessionId,
+  hasConversationPromptOverlap,
+  isCurrentTokenSession
+} from "./conversationSession";
+import {
+  CanvasLayoutSession,
+  applyCanvasLayoutWidth,
+  canvasMutationsRequireSessionRefresh,
+  captureCanvasScroll,
+  clearCanvasLayoutSession,
+  createCanvasLayoutSession,
+  isCanvasLayoutSessionConnected,
+  isVirtualizedCodeCanvas,
+  markCanvasLayoutSession,
+  restoreCanvasScroll,
+  shouldApplyCanvasTypography
+} from "./canvasLayout";
+import {
   ChatGptAdapter,
   ChatGptDomRule,
   AdapterHealth,
+  CHATGPT_COMPAT_RULES_URL,
+  CHATGPT_MESSAGE_NODE_SELECTOR,
+  CHATGPT_TURN_NODE_SELECTOR,
   createChatGptAdapter,
-  createDefaultAdapterHealth,
   normalizeCompatRulesPayload
 } from "./chatGptAdapter";
 import "./styles/content.css";
 
 const ROOT_ID = "conversation-navigator-root";
 const ANCHOR_ATTR = "data-conversation-navigator-id";
+const MESSAGE_ROLE_ATTR = "data-cnav-message-role";
+const MESSAGE_ROLE_SELECTOR = `[${MESSAGE_ROLE_ATTR}]`;
+const CHATGPT_MESSAGE_OR_MARKER_SELECTOR = `${CHATGPT_MESSAGE_NODE_SELECTOR},${MESSAGE_ROLE_SELECTOR}`;
+const CHATGPT_TURN_OR_MARKER_SELECTOR = `${CHATGPT_TURN_NODE_SELECTOR},${MESSAGE_ROLE_SELECTOR}`;
 const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
 const COMPAT_RULES_STORAGE_KEY = "conversationNavigator:compatRules:v1";
 const SCAN_DEBOUNCE_MS = 650;
 const STREAMING_SCAN_DEBOUNCE_MS = 1400;
 const IDLE_SCAN_TIMEOUT_MS = 1200;
 const CHAT_STYLE_ID = "conversation-navigator-chat-style";
+const CHAT_STYLE_VERSION = "2026-07-v8-4-chatgpt-dom-compat";
 const TABLE_COPY_FORMAT_STORAGE_KEY = "conversationNavigator:tableCopyFormat:v1";
 const OFFICIAL_THREAD_WIDTH = 60;
 const THREAD_WIDTH_MIN = 60;
@@ -64,8 +87,12 @@ const THREAD_WIDTH_MAX = 100;
 const DEFAULT_TOKEN_BUDGET = 128000;
 const TOKEN_CACHE_LIMIT = 900;
 const TOKENIZER_TEXT_LIMIT = 12000;
+const TOKEN_BATCH_MAX_ITEMS = 128;
+const TOKEN_BATCH_MAX_BYTES = 512 * 1024;
+const TOKEN_COUNTS_UPDATED_EVENT = "conversation-navigator-token-counts-updated";
 const TOKEN_BREAKDOWN_NODE_LIMIT = 80;
 const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const COMPAT_RULES_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_HUD_WIDTH = 246;
 const DEFAULT_HUD_GAP = 26;
 const TEXT_CONTROL_SELECTOR = [
@@ -96,7 +123,6 @@ const TEXT_IGNORED_CONTAINER_SELECTOR = [
 ].join(",");
 
 type Role = "user" | "assistant";
-type SiteId = "chatgpt";
 type ColorTheme = "light" | "dark";
 type HeatLevel = 0 | 1 | 2 | 3;
 type NavigatorGroupKind =
@@ -129,16 +155,12 @@ interface NavigatorItem {
   id: string;
   promptPreview: string;
   answerSummary: string;
-  customTitle?: string;
-  note?: string;
   turnIndex: number;
   domOrder: number;
-  favorite: boolean;
   promptTokens: number;
   answerTokens: number;
   totalTokens: number;
   heatLevel: HeatLevel;
-  site: SiteId;
   mounted: boolean;
 }
 
@@ -160,7 +182,6 @@ interface MessageMapEntry {
   text: string;
   turnIndex: number;
   domOrder: number;
-  favorite: boolean;
   heatLevel: HeatLevel;
   mounted: boolean;
 }
@@ -216,12 +237,11 @@ interface StoredModelCatalog {
   models: ModelBudgetEntry[];
 }
 
-type ModelSyncStatus = "idle" | "syncing" | "synced" | "failed";
-type CompatRulesSyncStatus = "idle" | "syncing" | "synced" | "failed";
-
 interface StoredCompatRules {
   updatedAt: number;
   rules: ChatGptDomRule[];
+  lastAttemptAt?: number;
+  lastError?: string;
 }
 
 interface ScheduledIdleWork {
@@ -237,6 +257,17 @@ interface ResizeFrame {
   toggleLeft: number;
 }
 
+type CanvasWidthTarget = CanvasLayoutSession;
+
+interface CanvasResizeMetrics {
+  boundsRect: DOMRect;
+  leftBound: number;
+  rightBound: number;
+  availableWidth: number;
+  width: number;
+  center: number;
+}
+
 function areResizeFramesEqual(first: ResizeFrame | null, second: ResizeFrame | null): boolean {
   return first?.left === second?.left &&
     first?.right === second?.right &&
@@ -250,8 +281,12 @@ const nodeAnchorRegistry = new WeakMap<HTMLElement, string>();
 const tokenCountCache = new Map<string, number>();
 const tokenKeyQueue: string[] = [];
 let nextNodeAnchorIndex = 1;
-let tokenizer: Tiktoken | null = null;
-const volatilePageSessionId = Math.random().toString(36).slice(2, 10);
+const pendingTokenCountRequests = new Map<string, { text: string; sessionId: string }>();
+const tokenCountRequestsInFlight = new Set<string>();
+let tokenBatchTimer = 0;
+let tokenBatchRunning = false;
+const tabSessionId = Math.random().toString(36).slice(2, 10);
+let activeTokenSessionId = "";
 
 const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
   {
@@ -318,6 +353,16 @@ const MODEL_MODE_ORDER = ["instant", "thinking", "pro", "base"];
 let activeCompatRules: ChatGptDomRule[] = [];
 let activeCompatRulesSource: CompatRulesSource = "built-in";
 let navigationAnimationFrame = 0;
+let latestPageHealth: PageAdapterHealth | null = null;
+let latestNavigatorExportState: {
+  items: NavigatorItem[];
+  pageKey: string;
+  language: AppLanguage;
+} = {
+  items: [],
+  pageKey: "",
+  language: DEFAULT_SETTINGS.language
+};
 
 function setActiveCompatRules(rules: ChatGptDomRule[], source: CompatRulesSource) {
   activeCompatRules = source === "remote" ? rules : [];
@@ -358,62 +403,99 @@ function getChatGptConversationId(): string | null {
   return null;
 }
 
-function isVolatileChatPage(): boolean {
-  const path = location.pathname.replace(/\/+$/, "");
-  return location.hostname === "chatgpt.com" || location.hostname === "chat.openai.com"
-    ? !getChatGptConversationId() && (path === "" || path === "/" || path === "/chat")
-    : false;
+function createConversationSessionId(generation: number): string {
+  return buildConversationSessionId(
+    location.hostname,
+    getChatGptConversationId(),
+    tabSessionId,
+    generation
+  );
 }
 
 function getPageId(): string {
-  const conversationId = getChatGptConversationId();
-  if (conversationId) {
-    return `${location.hostname}:conversation:${conversationId}`;
-  }
-
-  if (isVolatileChatPage()) {
-    return `${location.hostname}:session:${volatilePageSessionId}`;
-  }
-
-  const pathKey = `${location.hostname}${location.pathname}${location.search}`.replace(/\/+$/, "");
-  return pathKey || location.hostname;
+  return activeTokenSessionId || createConversationSessionId(0);
 }
 
-function getPageStorageKey(settings: NavigatorSettings, pageId = getPageId()): string {
-  return makeRecordKey(settings.cacheNamespace, pageId);
+let extensionStorageUnavailableWarned = false;
+
+function getExtensionStorageLocal() {
+  const chromeApi = typeof chrome === "undefined" ? undefined : chrome;
+  return chromeApi?.storage?.local ?? null;
 }
 
-function isVolatilePageKey(pageKey: string): boolean {
-  return pageKey.includes(":session:");
+function getExtensionStorageOnChanged() {
+  const chromeApi = typeof chrome === "undefined" ? undefined : chrome;
+  return chromeApi?.storage?.onChanged ?? null;
+}
+
+function getRuntimeLastErrorMessage(): string | undefined {
+  const chromeApi = typeof chrome === "undefined" ? undefined : chrome;
+  return chromeApi?.runtime?.lastError?.message;
+}
+
+function warnExtensionStorageUnavailableOnce(action: string, error?: unknown) {
+  if (extensionStorageUnavailableWarned) {
+    return;
+  }
+
+  extensionStorageUnavailableWarned = true;
+  console.warn(
+    `[GPT页面增强工具] ${action}时扩展存储暂不可用，当前页面将使用降级模式继续运行。`,
+    error
+  );
 }
 
 function storageGet<T>(key: string): Promise<T | undefined> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(key, (result) => {
-      const error = chrome.runtime.lastError;
-      if (error?.message) {
-        console.warn("[GPT聊天导航器] 读取本地缓存失败：", error.message);
-        resolve(undefined);
-        return;
-      }
+    const storage = getExtensionStorageLocal();
+    if (!storage) {
+      warnExtensionStorageUnavailableOnce("读取本地缓存");
+      resolve(undefined);
+      return;
+    }
 
-      resolve(result[key] as T | undefined);
-    });
+    try {
+      storage.get(key, (result) => {
+        const errorMessage = getRuntimeLastErrorMessage();
+        if (errorMessage) {
+          console.warn("[GPT页面增强工具] 读取本地缓存失败：", errorMessage);
+          resolve(undefined);
+          return;
+        }
+
+        resolve(result[key] as T | undefined);
+      });
+    } catch (error) {
+      warnExtensionStorageUnavailableOnce("读取本地缓存", error);
+      resolve(undefined);
+    }
   });
 }
 
 function storageSet(values: Record<string, unknown>): Promise<boolean> {
   return new Promise((resolve) => {
-    chrome.storage.local.set(values, () => {
-      const error = chrome.runtime.lastError;
-      if (error?.message) {
-        console.warn("[GPT聊天导航器] 写入本地缓存失败：", error.message);
-        resolve(false);
-        return;
-      }
+    const storage = getExtensionStorageLocal();
+    if (!storage) {
+      warnExtensionStorageUnavailableOnce("写入本地缓存");
+      resolve(false);
+      return;
+    }
 
-      resolve(true);
-    });
+    try {
+      storage.set(values, () => {
+        const errorMessage = getRuntimeLastErrorMessage();
+        if (errorMessage) {
+          console.warn("[GPT页面增强工具] 写入本地缓存失败：", errorMessage);
+          resolve(false);
+          return;
+        }
+
+        resolve(true);
+      });
+    } catch (error) {
+      warnExtensionStorageUnavailableOnce("写入本地缓存", error);
+      resolve(false);
+    }
   });
 }
 
@@ -425,79 +507,68 @@ function saveSettings(settings: NavigatorSettings): Promise<boolean> {
   return storageSet({ [STORAGE_SETTINGS_KEY]: normalizeSettings(settings) });
 }
 
-function readPageStorageRecord(pageKey: string): StoredConversationRecord | undefined {
-  try {
-    const value = window.localStorage.getItem(pageKey);
-    return value ? (JSON.parse(value) as StoredConversationRecord) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function readPageStorageRecords(namespace: string): Array<{ key: string; record: StoredConversationRecord }> {
-  const records: Array<{ key: string; record: StoredConversationRecord }> = [];
-
+function clearLegacyPageStorageRecords(): number {
+  const keys: string[] = [];
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index);
-      if (!key || !isNavigatorRecordKey(key, namespace)) {
+      if (!key || !key.includes(":page:")) {
         continue;
       }
 
-      const record = readPageStorageRecord(key);
-      if (record?.schemaVersion === 1 && Array.isArray(record.nodes)) {
-        records.push({ key, record });
+      const rawValue = window.localStorage.getItem(key);
+      if (!rawValue) {
+        continue;
+      }
+
+      try {
+        if (isLegacyConversationRecord(JSON.parse(rawValue), key)) {
+          keys.push(key);
+        }
+      } catch {
+        // Ignore unrelated or malformed page data.
       }
     }
+
+    keys.forEach((key) => window.localStorage.removeItem(key));
   } catch {
-    return [];
-  }
-
-  return records.sort((a, b) => b.record.updatedAt - a.record.updatedAt);
-}
-
-function clearPageStorageRecords(namespace: string, requestedKeys?: string[]): number {
-  const keys = Array.isArray(requestedKeys) && requestedKeys.length > 0
-    ? requestedKeys.filter((key) => typeof key === "string" && isNavigatorRecordKey(key, namespace))
-    : readPageStorageRecords(namespace).map((entry) => entry.key);
-
-  for (const key of keys) {
-    try {
-      window.localStorage.removeItem(key);
-    } catch {
-      // Keep clearing the remaining records even if a single key fails.
-    }
+    return 0;
   }
 
   return keys.length;
 }
 
-function writePageStorageRecord(pageKey: string, record: StoredConversationRecord): boolean {
-  try {
-    window.localStorage.setItem(pageKey, JSON.stringify(record));
-    return true;
-  } catch {
-    console.warn("[GPT聊天导航器] 写入页面 localStorage 失败。当前导航仍会继续工作。");
-    return false;
-  }
-}
+clearLegacyPageStorageRecords();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== PAGE_CACHE_LIST_MESSAGE && message?.type !== PAGE_CACHE_CLEAR_MESSAGE) {
+  const supportedMessageTypes = new Set([
+    MATERIALS_LIST_MESSAGE,
+    SELECTION_GET_MESSAGE,
+    EXPORT_SNAPSHOT_MESSAGE,
+    PAGE_STATUS_MESSAGE
+  ]);
+
+  if (!supportedMessageTypes.has(message?.type)) {
     return false;
   }
 
-  const namespace = typeof message.namespace === "string" && message.namespace.trim()
-    ? message.namespace
-    : DEFAULT_SETTINGS.cacheNamespace;
-
   try {
-    if (message.type === PAGE_CACHE_CLEAR_MESSAGE) {
-      sendResponse({ ok: true, removed: clearPageStorageRecords(namespace, message.keys) });
+    if (message.type === PAGE_STATUS_MESSAGE) {
+      sendResponse({ ok: true, health: latestPageHealth });
       return false;
     }
 
-    sendResponse({ ok: true, records: readPageStorageRecords(namespace) });
+    if (message.type === MATERIALS_LIST_MESSAGE) {
+      sendResponse({ ok: true, materials: createPageMaterials() });
+      return false;
+    }
+
+    if (message.type === SELECTION_GET_MESSAGE) {
+      sendResponse({ ok: true, material: createSelectionMaterial() });
+      return false;
+    }
+
+    sendResponse({ ok: true, snapshot: createExportSnapshot() });
   } catch (error) {
     sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -509,31 +580,17 @@ function getThreadWidthRem(widthSetting: number): number {
   return 48 + (widthSetting - THREAD_WIDTH_MIN) * 1.55;
 }
 
-function getThreadWidthSettingFromPixels(widthPixels: number): number {
+function getThreadWidthSettingFromPixels(widthPixels: number, roundValue = true): number {
   const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
   const widthRem = widthPixels / rem;
   const value = THREAD_WIDTH_MIN + (widthRem - 48) / 1.55;
-  return Math.min(THREAD_WIDTH_MAX, Math.max(THREAD_WIDTH_MIN, Math.round(value)));
+  const clampedValue = Math.min(THREAD_WIDTH_MAX, Math.max(THREAD_WIDTH_MIN, value));
+  return roundValue ? Math.round(clampedValue) : Number(clampedValue.toFixed(3));
 }
 
 function getThreadWidthPixels(widthSetting: number): number {
   const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
   return getThreadWidthRem(widthSetting) * rem;
-}
-
-async function readStoredRecord(
-  settings: NavigatorSettings,
-  pageKey: string
-): Promise<StoredConversationRecord | undefined> {
-  if (settings.cacheMode === "off" || isVolatilePageKey(pageKey)) {
-    return undefined;
-  }
-
-  if (settings.cacheMode === "page") {
-    return readPageStorageRecord(pageKey);
-  }
-
-  return storageGet<StoredConversationRecord>(pageKey);
 }
 
 function setStylePropertyIfChanged(style: CSSStyleDeclaration, property: string, value: string) {
@@ -550,14 +607,9 @@ function installChatTypographyStyle() {
     document.documentElement.appendChild(style);
   }
 
-  if (style.dataset.cnavStatic === "true") {
+  if (style.dataset.cnavStatic === CHAT_STYLE_VERSION) {
     return;
   }
-
-  const canvasTextSelector = [
-    `body :is([data-testid*="canvas" i], [data-testid*="artifact" i], [aria-label*="canvas" i], [aria-label*="画布" i], [class*="canvas" i], [class*="artifact" i], [class*="textLayer" i], .ProseMirror, .cm-content, .monaco-editor):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`,
-    `body :is([data-testid*="document" i], [aria-label*="document" i], [aria-label*="文档" i]):not(#${ROOT_ID} *):not([data-message-author-role] *):not(form *)`
-  ].join(",\n    ");
 
   style.textContent = `
     html[data-cnav-wide-thread="true"] main {
@@ -565,52 +617,52 @@ function installChatTypographyStyle() {
       --thread-content-width: var(--cnav-thread-width) !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(article[data-testid^="conversation-turn"], [data-testid^="conversation-turn"]):has([data-message-author-role]) {
+    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="max-w-"], [class*="thread-content"], [class*="conversation-turn"]):has([data-message-author-role]) {
+    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="max-w-"], [class*="thread-content"], [class*="conversation-turn"]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(article[data-testid^="conversation-turn"], [data-testid^="conversation-turn"]):has([data-message-author-role]) > :is(div, section) {
+    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) > :is(div, section) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="thread-content"]):has(> [data-message-author-role]) {
+    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="thread-content"]):has(> :is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main [data-message-author-role] {
+    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) {
       max-width: 100% !important;
       width: 100% !important;
       min-width: 0 !important;
     }
 
-    html[data-cnav-wide-thread="true"] main [data-message-author-role] > :is(div, section) {
+    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) > :is(div, section) {
       max-width: 100% !important;
       width: 100% !important;
       min-width: 0 !important;
     }
 
-    html[data-cnav-wide-thread="true"] main [data-message-author-role="assistant"] :is(.markdown, .whitespace-pre-wrap) {
+    html[data-cnav-wide-thread="true"] main :is([data-message-author-role="assistant"], [data-cnav-message-role="assistant"]) :is(.markdown, .whitespace-pre-wrap) {
       width: 100% !important;
       max-width: 100% !important;
     }
 
-    main [data-message-author-role] {
+    main :is([data-message-author-role], [data-cnav-message-role]) {
       font-size: var(--cnav-chat-font-size, 1rem) !important;
       letter-spacing: var(--cnav-chat-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-line-height, 1.55) !important;
@@ -618,43 +670,59 @@ function installChatTypographyStyle() {
       word-break: normal !important;
     }
 
-    main [data-message-author-role] :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
+    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
       font-size: inherit !important;
       letter-spacing: var(--cnav-chat-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-line-height, 1.55) !important;
     }
 
-    main [data-message-author-role] :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
+    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
       margin-top: var(--cnav-chat-paragraph-gap, 0.44em) !important;
       margin-bottom: var(--cnav-chat-paragraph-gap, 0.44em) !important;
     }
 
-    main [data-message-author-role] :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
+    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
       margin-top: 0 !important;
     }
 
-    main [data-message-author-role] :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
+    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
       margin-bottom: 0 !important;
     }
 
-    main [data-message-author-role] :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
+    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
       font-size: var(--cnav-chat-code-size, 0.94rem) !important;
       letter-spacing: var(--cnav-chat-code-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-code-line-height, 1.46) !important;
     }
 
-    main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words) {
+    main :is([data-message-author-role], [data-cnav-message-role]),
+    main :is([data-message-author-role], [data-cnav-message-role]) *,
+    [data-cnav-canvas-kind="document"],
+    [data-cnav-canvas-kind="document"] *,
+    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]),
+    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) *,
+    html[data-cnav-wide-canvas="true"] [data-cnav-canvas-width-target="true"] {
+      animation: none !important;
+      scroll-behavior: auto !important;
+      transition: none !important;
+    }
+
+    main :is([data-message-author-role="user"], [data-cnav-message-role="user"]) :is(.whitespace-pre-wrap, .break-words) {
       max-width: min(760px, 72vw) !important;
       overflow-wrap: anywhere !important;
       word-break: normal !important;
     }
 
-    main [data-message-author-role="user"] :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
+    main :is([data-message-author-role="user"], [data-cnav-message-role="user"]) :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
       max-height: 46vh;
       overflow-y: auto;
     }
 
-    ${canvasTextSelector} {
+    [data-cnav-canvas-kind="document"][data-cnav-canvas-text-root="true"],
+    [data-cnav-canvas-kind="document"] :is(
+      [data-cnav-canvas-text-root="true"],
+      [data-cnav-canvas-text-root="true"] :where(.ProseMirror, .markdown, .prose, [data-lexical-editor="true"], [contenteditable="true"], p, li, ul, ol, strong, em, blockquote, h1, h2, h3, h4, h5, h6)
+    ) {
       font-size: var(--cnav-canvas-font-size, 1rem) !important;
       letter-spacing: var(--cnav-canvas-letter-spacing, 0px) !important;
       line-height: var(--cnav-canvas-line-height, 1.55) !important;
@@ -662,32 +730,37 @@ function installChatTypographyStyle() {
       word-break: normal !important;
     }
 
-    ${canvasTextSelector} :where(.ProseMirror, .cm-line, .view-line, .view-line span, .markdown, .prose, p, li, span, strong, em, blockquote) {
-      font-size: inherit !important;
-      letter-spacing: var(--cnav-canvas-letter-spacing, 0px) !important;
-      line-height: var(--cnav-canvas-line-height, 1.55) !important;
-    }
-
-    ${canvasTextSelector} :where(p, li) {
-      margin-top: var(--cnav-canvas-paragraph-gap, 0.4em) !important;
-      margin-bottom: var(--cnav-canvas-paragraph-gap, 0.4em) !important;
-    }
-
-    ${canvasTextSelector} :where(p:first-child, li:first-child) {
-      margin-top: 0 !important;
-    }
-
-    ${canvasTextSelector} :where(p:last-child, li:last-child) {
-      margin-bottom: 0 !important;
-    }
-
-    ${canvasTextSelector} :where(code, pre, .cm-line, .view-line, .view-line span) {
+    [data-cnav-canvas-kind="document"] [data-cnav-canvas-text-root="true"] :where(code, pre) {
       font-size: var(--cnav-canvas-code-size, 0.94rem) !important;
       letter-spacing: var(--cnav-canvas-code-letter-spacing, 0px) !important;
       line-height: var(--cnav-canvas-code-line-height, 1.46) !important;
     }
+
+    [data-cnav-canvas-kind="document"] [data-cnav-canvas-text-root="true"] :where(p, li) {
+      margin-top: var(--cnav-canvas-paragraph-gap, 0.4em) !important;
+      margin-bottom: var(--cnav-canvas-paragraph-gap, 0.4em) !important;
+    }
+
+    [data-cnav-canvas-scroll-root="true"] {
+      overflow-anchor: none !important;
+    }
+
+    html[data-cnav-wide-canvas="true"] [data-cnav-canvas-width-target="true"] {
+      box-sizing: border-box !important;
+      max-width: var(--cnav-canvas-target-width, var(--cnav-canvas-width)) !important;
+      width: var(--cnav-canvas-target-width, min(var(--cnav-canvas-width), calc(100vw - 24px))) !important;
+      margin-inline: auto !important;
+      min-width: 0 !important;
+    }
+
+    html[data-cnav-wide-canvas="true"] [data-cnav-canvas-kind="document"][data-cnav-canvas-text-root="true"],
+    html[data-cnav-wide-canvas="true"] [data-cnav-canvas-kind="document"] [data-cnav-canvas-text-root="true"] {
+      max-width: 100% !important;
+      width: 100% !important;
+      min-width: 0 !important;
+    }
   `;
-  style.dataset.cnavStatic = "true";
+  style.dataset.cnavStatic = CHAT_STYLE_VERSION;
 }
 
 function applyChatTypography(settings: NavigatorSettings) {
@@ -704,13 +777,6 @@ function applyChatTypography(settings: NavigatorSettings) {
   setStylePropertyIfChanged(rootStyle, "--cnav-chat-line-height", `${(settings.chatLineHeight / 100).toFixed(2)}`);
   setStylePropertyIfChanged(rootStyle, "--cnav-chat-code-line-height", `${Math.max(1.38, settings.chatLineHeight / 100 * 0.94).toFixed(2)}`);
   setStylePropertyIfChanged(rootStyle, "--cnav-chat-paragraph-gap", `${Math.max(0.34, (settings.chatLineHeight - 125) * 0.006 + 0.26).toFixed(2)}em`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-font-size", `${(settings.canvasFontScale / 100).toFixed(2)}rem`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-size", `${Math.max(0.82, (settings.canvasFontScale / 100) * 0.94).toFixed(2)}rem`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-letter-spacing", `${settings.canvasLetterSpacing.toFixed(2)}px`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-letter-spacing", `${Math.min(settings.canvasLetterSpacing, 2).toFixed(2)}px`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-line-height", `${(settings.canvasLineHeight / 100).toFixed(2)}`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-line-height", `${Math.max(1.34, settings.canvasLineHeight / 100 * 0.94).toFixed(2)}`);
-  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-paragraph-gap", `${Math.max(0.28, (settings.canvasLineHeight - 120) * 0.005 + 0.22).toFixed(2)}em`);
   setStylePropertyIfChanged(rootStyle, "--cnav-thread-width", `min(${contentWidth}, calc(100vw - 24px))`);
 
   if (settings.chatContentWidth > OFFICIAL_THREAD_WIDTH) {
@@ -720,12 +786,502 @@ function applyChatTypography(settings: NavigatorSettings) {
   }
 }
 
+function applyCanvasTypography(settings: NavigatorSettings) {
+  installChatTypographyStyle();
+
+  const root = document.documentElement;
+  const rootStyle = root.style;
+  const canvasContentWidth = `${getThreadWidthRem(settings.canvasContentWidth).toFixed(2)}rem`;
+
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-font-size", `${(settings.canvasFontScale / 100).toFixed(2)}rem`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-size", `${Math.max(0.82, (settings.canvasFontScale / 100) * 0.94).toFixed(2)}rem`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-letter-spacing", `${settings.canvasLetterSpacing.toFixed(2)}px`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-letter-spacing", `${Math.min(settings.canvasLetterSpacing, 2).toFixed(2)}px`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-line-height", `${(settings.canvasLineHeight / 100).toFixed(2)}`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-code-line-height", `${Math.max(1.34, settings.canvasLineHeight / 100 * 0.94).toFixed(2)}`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-paragraph-gap", `${Math.max(0.28, (settings.canvasLineHeight - 120) * 0.005 + 0.22).toFixed(2)}em`);
+  setStylePropertyIfChanged(rootStyle, "--cnav-canvas-width", `min(${canvasContentWidth}, calc(100vw - 24px))`);
+
+  if (shouldApplyCanvasWidthLayout(settings)) {
+    root.dataset.cnavWideCanvas = "true";
+  } else {
+    delete root.dataset.cnavWideCanvas;
+  }
+}
+
+function shouldApplyCanvasWidthLayout(settings: NavigatorSettings): boolean {
+  return settings.canvasContentWidth !== OFFICIAL_THREAD_WIDTH;
+}
+
+function shouldTrackCanvasWidthTarget(settings: NavigatorSettings): boolean {
+  return settings.canvasWidthEnabled || shouldApplyCanvasWidthLayout(settings);
+}
+
 function safeQueryAll(selector: string, root: ParentNode = document): HTMLElement[] {
   try {
     return Array.from(root.querySelectorAll<HTMLElement>(selector));
   } catch {
     return [];
   }
+}
+
+function isCanvasTextEditorElement(element: HTMLElement): boolean {
+  return element.matches([
+    ".ProseMirror",
+    ".cm-content",
+    ".monaco-editor",
+    ".cm-editor",
+    ".markdown",
+    ".prose",
+    '[contenteditable="true"]',
+    '[data-lexical-editor="true"]',
+    "[data-page-number]",
+    '[role="document"]'
+  ].join(","));
+}
+
+const CANVAS_DISCOVERY_SELECTOR = [
+  '[data-testid*="canvas" i]',
+  '[data-testid*="artifact" i]',
+  '[data-testid*="document" i]',
+  '[data-testid*="doc" i]',
+  '[data-testid*="editor" i]',
+  '[aria-label*="canvas" i]',
+  '[aria-label*="artifact" i]',
+  '[aria-label*="document" i]',
+  '[aria-label*="doc" i]',
+  '[aria-label*="画布" i]',
+  '[aria-label*="文档" i]',
+  '[class*="canvas" i]',
+  '[class*="artifact" i]',
+  '[class*="document" i]',
+  '[class*="doc-" i]',
+  '[class*="editor" i]',
+  '[class*="textLayer" i]',
+  ".ProseMirror",
+  ".cm-content",
+  ".cm-editor",
+  ".monaco-editor",
+  '[contenteditable="true"]',
+  '[data-lexical-editor="true"]',
+  '[role="document"]',
+  "[data-page-number]"
+].join(",");
+
+const CANVAS_SHELL_SELECTOR = [
+  '[data-testid*="canvas" i]',
+  '[data-testid*="artifact" i]',
+  '[data-testid*="document" i]',
+  '[data-testid*="doc" i]',
+  '[aria-label*="canvas" i]',
+  '[aria-label*="artifact" i]',
+  '[aria-label*="document" i]',
+  '[aria-label*="doc" i]',
+  '[aria-label*="画布" i]',
+  '[aria-label*="文档" i]',
+  '[class*="canvas" i]',
+  '[class*="artifact" i]',
+  '[class*="document" i]'
+].join(",");
+
+function findCanvasSessionRoot(seedRoot: HTMLElement, textRoot: HTMLElement): HTMLElement {
+  const closestShell = textRoot.closest<HTMLElement>(CANVAS_SHELL_SELECTOR);
+  if (closestShell && !isExcludedCanvasElement(closestShell)) {
+    return closestShell;
+  }
+  return seedRoot;
+}
+
+function isCanvasLikeElement(element: HTMLElement): boolean {
+  const descriptor = [
+    element.getAttribute("data-testid") || "",
+    element.getAttribute("aria-label") || "",
+    element.getAttribute("role") || "",
+    element.id || "",
+    element.className || ""
+  ].join(" ");
+
+  return /(canvas|artifact|document|doc-|editor|textlayer|page|画布|文档)/i.test(descriptor) ||
+    isCanvasTextEditorElement(element);
+}
+
+function isExcludedCanvasElement(element: HTMLElement): boolean {
+  return Boolean(
+    element.closest(`#${ROOT_ID}`) ||
+      element.closest(CHATGPT_MESSAGE_OR_MARKER_SELECTOR) ||
+      element.closest("form") ||
+      element.closest("header, nav, menu, [role='menu'], [role='toolbar']") ||
+      element.closest("[data-testid*='composer' i], [aria-label*='composer' i]")
+  );
+}
+
+function isCanvasWidthTargetCandidate(element: HTMLElement): boolean {
+  if (
+    isExcludedCanvasElement(element)
+  ) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (!isRectVisible(rect) || rect.width < 320 || rect.height < 72) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(element);
+  if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
+    return false;
+  }
+
+  const textLength = normalizeText(element.innerText || element.textContent || "").length;
+  return isCanvasTextEditorElement(element) || textLength >= 80;
+}
+
+function getCanvasCandidateScore(element: HTMLElement): number {
+  const rect = element.getBoundingClientRect();
+  const textLength = Math.min(8000, normalizeText(element.innerText || element.textContent || "").length);
+  const areaScore = Math.min(1400000, rect.width * rect.height) / 1000;
+  const editorBonus = isCanvasTextEditorElement(element) ? 120 : 0;
+  const compactPenalty = rect.height < 160 ? 180 : 0;
+  return areaScore + textLength * 0.08 + editorBonus - compactPenalty;
+}
+
+function collectCanvasWidthTargetCandidates(root: HTMLElement): HTMLElement[] {
+  const contentSelector = [
+    ".ProseMirror",
+    ".cm-content",
+    ".cm-editor",
+    ".monaco-editor",
+    ".markdown",
+    ".prose",
+    '[contenteditable="true"]',
+    '[data-lexical-editor="true"]',
+    "[data-page-number]",
+    '[role="document"]',
+    "main",
+    "article",
+    "section",
+    "[class*='content' i]",
+    "[class*='body' i]",
+    "[class*='page' i]",
+    "[class*='editor' i]"
+  ].join(",");
+
+  const candidates = [
+    root,
+    ...safeQueryAll(contentSelector, root)
+  ].filter(isCanvasWidthTargetCandidate);
+
+  return Array.from(new Set(candidates))
+    .sort((first, second) => getCanvasCandidateScore(second) - getCanvasCandidateScore(first));
+}
+
+function getCanvasEvidenceDescriptor(element: HTMLElement): string {
+  return [
+    element.getAttribute("placeholder") || "",
+    element.getAttribute("aria-label") || "",
+    element.getAttribute("title") || "",
+    element.getAttribute("data-testid") || "",
+    element.textContent || ""
+  ].join(" ");
+}
+
+function hasCanvasModificationComposer(): boolean {
+  const editPromptPattern = /(描述修改|修改内容|改写|编辑此|修改此|describe\s+(the\s+)?(change|edit|modification)|what\s+to\s+(change|edit|modify)|ask\s+.*\s+(change|edit|modify)|make\s+changes|edit\s+this|modify\s+this)/i;
+  return safeQueryAll("textarea, input, [contenteditable='true'], [role='textbox']").some((element) => {
+    if (element.closest(`#${ROOT_ID}`) || element.closest(CHATGPT_MESSAGE_OR_MARKER_SELECTOR)) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (!isRectVisible(rect) || rect.width < 180 || rect.height < 24) {
+      return false;
+    }
+
+    return editPromptPattern.test(getCanvasEvidenceDescriptor(element));
+  });
+}
+
+function hasCanvasTopBarEvidence(): boolean {
+  const controls = safeQueryAll("button, a, [role='button']").filter((element) => {
+    if (element.closest(`#${ROOT_ID}`) || element.closest(CHATGPT_MESSAGE_OR_MARKER_SELECTOR)) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return isRectVisible(rect) && rect.top < 130;
+  });
+  const hasLeftClose = controls.some((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.left < 180 && /(关闭|返回|退出|close|back|exit|×|x)/i.test(getCanvasEvidenceDescriptor(element));
+  });
+  const rightActionCount = controls.filter((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.right > window.innerWidth - 260 &&
+      /(复制|下载|全屏|打开|copy|download|fullscreen|expand|open)/i.test(getCanvasEvidenceDescriptor(element));
+  }).length;
+
+  return hasLeftClose && rightActionCount >= 2;
+}
+
+function hasCanvasModeEvidence(): boolean {
+  return hasCanvasModificationComposer() || hasCanvasTopBarEvidence();
+}
+
+function getFallbackCanvasCandidateScore(element: HTMLElement): number {
+  const rect = element.getBoundingClientRect();
+  const textLength = Math.min(16000, normalizeText(element.innerText || element.textContent || "").length);
+  const idealWidth = Math.min(980, Math.max(620, window.innerWidth * 0.48));
+  const widthDistance = Math.abs(rect.width - idealWidth);
+  const widthScore = Math.max(0, 460 - widthDistance * 0.42);
+  const textScore = Math.min(700, textLength * 0.06);
+  const heightScore = Math.min(260, rect.height * 0.12);
+  const centerDistance = Math.abs((rect.left + rect.right) / 2 - window.innerWidth / 2);
+  const centerScore = Math.max(0, 180 - centerDistance * 0.1);
+  const hugePenalty = rect.width > window.innerWidth * 0.82 ? 520 : 0;
+  const tinyPenalty = rect.width < 460 ? 180 : 0;
+  const controlCount = safeQueryAll("button, input, textarea, select, [role='button']", element).length;
+  const controlsPenalty = controlCount > 8 ? Math.min(360, controlCount * 18) : 0;
+
+  return widthScore + textScore + heightScore + centerScore - hugePenalty - tinyPenalty - controlsPenalty;
+}
+
+function findFallbackCanvasWidthTarget(): CanvasWidthTarget | null {
+  if (!hasCanvasModeEvidence()) {
+    return null;
+  }
+
+  const root = document.querySelector<HTMLElement>("main") ?? document.body;
+  if (!root || !isRectVisible(root.getBoundingClientRect())) {
+    return null;
+  }
+
+  const candidates = Array.from(new Set([
+    root,
+    ...safeQueryAll("article, section, [role='document'], [role='main'], main, div", root).slice(0, 1800)
+  ])).filter((element) => {
+    if (isExcludedCanvasElement(element)) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    if (!isRectVisible(rect) || rect.width < 360 || rect.height < 120) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
+      return false;
+    }
+
+    const textLength = normalizeText(element.innerText || element.textContent || "").length;
+    return textLength >= 160;
+  });
+
+  const [target] = candidates.sort(
+    (first, second) => getFallbackCanvasCandidateScore(second) - getFallbackCanvasCandidateScore(first)
+  );
+
+  return target ? createCanvasLayoutSession(findCanvasSessionRoot(root, target), target) : null;
+}
+
+function findCanvasWidthTargets(): CanvasWidthTarget[] {
+  const roots = safeQueryAll(CANVAS_DISCOVERY_SELECTOR)
+    .filter((element) =>
+      !isExcludedCanvasElement(element) &&
+      isCanvasLikeElement(element)
+    );
+
+  const targets: CanvasWidthTarget[] = [];
+  const seenTargets = new Set<HTMLElement>();
+  for (const root of roots.slice(0, 100)) {
+    const [textRoot] = collectCanvasWidthTargetCandidates(root);
+    if (!textRoot) {
+      continue;
+    }
+
+    const session = createCanvasLayoutSession(findCanvasSessionRoot(root, textRoot), textRoot);
+    if (seenTargets.has(session.layoutTarget)) {
+      continue;
+    }
+
+    seenTargets.add(session.layoutTarget);
+    targets.push(session);
+  }
+
+  const fallbackTarget = findFallbackCanvasWidthTarget();
+  if (fallbackTarget && !seenTargets.has(fallbackTarget.layoutTarget)) {
+    seenTargets.add(fallbackTarget.layoutTarget);
+    targets.push(fallbackTarget);
+  }
+
+  return targets
+    .sort((first, second) => getCanvasCandidateScore(second.textRoot) - getCanvasCandidateScore(first.textRoot))
+    .slice(0, 12);
+}
+
+function clearOrphanedCanvasLayoutMarkers() {
+  document
+    .querySelectorAll<HTMLElement>("[data-cnav-canvas-root], [data-cnav-canvas-kind], [data-cnav-canvas-text-root], [data-cnav-canvas-scroll-root], [data-cnav-canvas-width-target], [data-cnav-canvas-active-target]")
+    .forEach((element) => {
+      element.removeAttribute("data-cnav-canvas-root");
+      element.removeAttribute("data-cnav-canvas-kind");
+      element.removeAttribute("data-cnav-canvas-text-root");
+      element.removeAttribute("data-cnav-canvas-scroll-root");
+      element.removeAttribute("data-cnav-canvas-width-target");
+      element.removeAttribute("data-cnav-canvas-active-target");
+      element.style.removeProperty("--cnav-canvas-target-width");
+      element.style.removeProperty("--cnav-canvas-target-shift");
+    });
+}
+
+function syncCanvasWidthTargets(
+  settings: NavigatorSettings,
+  currentSession: CanvasWidthTarget | null
+): CanvasWidthTarget | null {
+  if (isCanvasLayoutSessionConnected(currentSession)) {
+    markCanvasLayoutSession(currentSession, shouldApplyCanvasWidthLayout(settings));
+    return currentSession;
+  }
+
+  clearCanvasLayoutSession(currentSession);
+  clearOrphanedCanvasLayoutMarkers();
+  const targets = findCanvasWidthTargets();
+  const activeTarget = targets[0] ?? null;
+  if (activeTarget) {
+    markCanvasLayoutSession(activeTarget, shouldApplyCanvasWidthLayout(settings));
+  }
+
+  return activeTarget;
+}
+
+function getActiveCanvasWidthTarget(): CanvasWidthTarget | null {
+  const layoutTarget =
+    document.querySelector<HTMLElement>('[data-cnav-canvas-active-target="true"]') ??
+    document.querySelector<HTMLElement>('[data-cnav-canvas-width-target="true"]');
+  const root = document.querySelector<HTMLElement>('[data-cnav-canvas-root="true"]');
+  const textRoot = document.querySelector<HTMLElement>('[data-cnav-canvas-text-root="true"]');
+  if (!layoutTarget || !root || !textRoot || !isRectVisible(layoutTarget.getBoundingClientRect())) {
+    return null;
+  }
+
+  const session = createCanvasLayoutSession(root, textRoot);
+  session.layoutTarget = layoutTarget;
+  session.scrollContainer = document.querySelector<HTMLElement>('[data-cnav-canvas-scroll-root="true"]');
+  session.lastWidthPixels = Number.parseFloat(
+    layoutTarget.style.getPropertyValue("--cnav-canvas-target-width")
+  ) || null;
+  return session;
+}
+
+function getCanvasResizeBoundsRect(target: HTMLElement, root: HTMLElement): DOMRect {
+  const targetRect = target.getBoundingClientRect();
+  const rootRect = root.getBoundingClientRect();
+  let bestRect = isRectVisible(rootRect) ? rootRect : targetRect;
+
+  for (let parent = target.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+    if (parent.closest(`#${ROOT_ID}`) || parent.closest(CHATGPT_MESSAGE_OR_MARKER_SELECTOR)) {
+      continue;
+    }
+
+    const rect = parent.getBoundingClientRect();
+    if (
+      !isRectVisible(rect) ||
+      rect.width < targetRect.width + 80 ||
+      rect.height < Math.min(220, targetRect.height * 0.5)
+    ) {
+      continue;
+    }
+
+    if (isCanvasLikeElement(parent) || rect.width > bestRect.width + 80) {
+      bestRect = rect;
+      break;
+    }
+  }
+
+  if (bestRect.width < targetRect.width + 80) {
+    const mainRect = document.querySelector<HTMLElement>("main")?.getBoundingClientRect();
+    if (mainRect && isRectVisible(mainRect) && mainRect.width > bestRect.width + 80) {
+      bestRect = mainRect;
+    }
+  }
+
+  return bestRect;
+}
+
+function getCanvasResizeMetrics(
+  target: CanvasWidthTarget,
+  settings: NavigatorSettings,
+  widthPixelsOverride?: number
+): CanvasResizeMetrics | null {
+  const boundsRect = getCanvasResizeBoundsRect(target.layoutTarget, target.root);
+  const leftBound = Math.max(0, boundsRect.left);
+  const rightBound = Math.min(window.innerWidth, boundsRect.right);
+  if (rightBound - leftBound < 360) {
+    return null;
+  }
+
+  const availableWidth = Math.max(340, rightBound - leftBound - 24);
+  const desiredWidth = widthPixelsOverride ?? getThreadWidthPixels(settings.canvasContentWidth);
+  const width = Math.min(desiredWidth, availableWidth);
+  const center = leftBound + (rightBound - leftBound) / 2;
+
+  return {
+    boundsRect,
+    leftBound,
+    rightBound,
+    availableWidth,
+    width,
+    center
+  };
+}
+
+function applyCanvasWidthTargetLayout(
+  target: CanvasWidthTarget,
+  settings: NavigatorSettings,
+  widthPixelsOverride?: number
+): CanvasResizeMetrics | null {
+  const metrics = getCanvasResizeMetrics(target, settings, widthPixelsOverride);
+  if (!metrics) {
+    target.layoutTarget.style.removeProperty("--cnav-canvas-target-width");
+    target.lastWidthPixels = null;
+    return null;
+  }
+
+  const scrollSnapshot = captureCanvasScroll(target);
+  if (applyCanvasLayoutWidth(target, metrics.width)) {
+    window.requestAnimationFrame(() => {
+      restoreCanvasScroll(scrollSnapshot);
+      window.requestAnimationFrame(() => restoreCanvasScroll(scrollSnapshot));
+    });
+  }
+
+  return metrics;
+}
+
+function getCanvasResizeFrameFromMetrics(target: CanvasWidthTarget, metrics: CanvasResizeMetrics): ResizeFrame {
+  const targetRect = target.textRoot.getBoundingClientRect();
+  const boundsRect = metrics.boundsRect;
+  const topCandidate = Math.max(targetRect.top, boundsRect.top + 52);
+  const top = Math.max(76, Math.min(Math.round(topCandidate), window.innerHeight - 320));
+  const bottomCandidate = Math.min(window.innerHeight - 72, Math.max(targetRect.bottom, boundsRect.bottom - 32));
+  const height = Math.max(260, Math.round(bottomCandidate - top));
+
+  return {
+    left: Math.round(metrics.center - metrics.width / 2),
+    right: Math.round(metrics.center + metrics.width / 2),
+    top,
+    height,
+    toggleLeft: Math.round(Math.max(18, metrics.leftBound + 18))
+  };
+}
+
+function getCanvasResizeFrame(
+  target: CanvasWidthTarget,
+  settings: NavigatorSettings,
+  widthPixelsOverride?: number
+): ResizeFrame | null {
+  const metrics = getCanvasResizeMetrics(target, settings, widthPixelsOverride);
+  return metrics ? getCanvasResizeFrameFromMetrics(target, metrics) : null;
 }
 
 function requestIdleWork(callback: () => void, timeout = IDLE_SCAN_TIMEOUT_MS): ScheduledIdleWork {
@@ -839,21 +1395,102 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function getTokenizer(): Tiktoken {
-  tokenizer ??= new Tiktoken(o200kBase);
-  return tokenizer;
+function rememberTokenCount(cacheKey: string, count: number) {
+  tokenCountCache.set(cacheKey, count);
+  tokenKeyQueue.push(cacheKey);
+  while (tokenKeyQueue.length > TOKEN_CACHE_LIMIT) {
+    const staleKey = tokenKeyQueue.shift();
+    if (staleKey) {
+      tokenCountCache.delete(staleKey);
+    }
+  }
 }
 
-function approximateTokenCount(text: string): number {
-  const normalized = normalizeText(text);
-  if (!normalized) {
-    return 0;
+function scheduleTokenCountBatch() {
+  if (tokenBatchTimer || tokenBatchRunning || pendingTokenCountRequests.size === 0) {
+    return;
   }
 
-  const cjk = normalized.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g)?.length ?? 0;
-  const asciiWords = normalized.match(/[a-zA-Z0-9_]+/g)?.length ?? 0;
-  const punctuation = normalized.match(/[^\s\w\u3400-\u9FFF\uF900-\uFAFF]/g)?.length ?? 0;
-  return Math.max(1, Math.ceil(cjk * 1.08 + asciiWords * 1.25 + punctuation * 0.55));
+  tokenBatchTimer = window.setTimeout(() => {
+    tokenBatchTimer = 0;
+    void flushTokenCountBatch();
+  }, 40);
+}
+
+async function flushTokenCountBatch() {
+  if (tokenBatchRunning || pendingTokenCountRequests.size === 0) {
+    return;
+  }
+
+  const items: Array<{ id: string; text: string }> = [];
+  let payloadBytes = 0;
+  const firstPending = pendingTokenCountRequests.values().next().value as
+    | { text: string; sessionId: string }
+    | undefined;
+  const sessionId = firstPending?.sessionId ?? activeTokenSessionId;
+  for (const [id, pending] of pendingTokenCountRequests) {
+    if (pending.sessionId !== sessionId) {
+      continue;
+    }
+
+    const text = pending.text;
+    const nextBytes = (id.length + text.length) * 2;
+    if (items.length >= TOKEN_BATCH_MAX_ITEMS || payloadBytes + nextBytes > TOKEN_BATCH_MAX_BYTES) {
+      break;
+    }
+
+    pendingTokenCountRequests.delete(id);
+    tokenCountRequestsInFlight.add(id);
+    payloadBytes += nextBytes;
+    items.push({ id, text });
+  }
+
+  if (items.length === 0) {
+    return;
+  }
+
+  tokenBatchRunning = true;
+  try {
+    const response = await new Promise<TokenCountBatchResponse | undefined>((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: TOKEN_COUNT_BATCH_MESSAGE, sessionId, items },
+          (result?: TokenCountBatchResponse) => {
+            if (chrome.runtime.lastError) {
+              resolve(undefined);
+              return;
+            }
+            resolve(result);
+          }
+        );
+      } catch {
+        resolve(undefined);
+      }
+    });
+
+    let changed = false;
+    if (response?.ok && Array.isArray(response.counts)) {
+      for (const result of response.counts) {
+        if (!Number.isFinite(result.count) || result.count < 0) {
+          continue;
+        }
+        rememberTokenCount(result.id, Math.round(result.count));
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      window.dispatchEvent(new CustomEvent(TOKEN_COUNTS_UPDATED_EVENT, {
+        detail: { sessionId: response?.sessionId ?? sessionId }
+      }));
+    }
+  } finally {
+    for (const item of items) {
+      tokenCountRequestsInFlight.delete(item.id);
+    }
+    tokenBatchRunning = false;
+    scheduleTokenCountBatch();
+  }
 }
 
 function countTokens(text: string, cacheSeed: string): number {
@@ -868,23 +1505,19 @@ function countTokens(text: string, cacheSeed: string): number {
     return cached;
   }
 
-  let count = 0;
-  try {
-    count =
-      normalized.length > TOKENIZER_TEXT_LIMIT
-        ? approximateTokenCount(normalized)
-        : getTokenizer().encode(normalized).length;
-  } catch {
-    count = approximateTokenCount(normalized);
-  }
+  const count = approximateTokenCount(normalized);
+  rememberTokenCount(cacheKey, count);
 
-  tokenCountCache.set(cacheKey, count);
-  tokenKeyQueue.push(cacheKey);
-  while (tokenKeyQueue.length > TOKEN_CACHE_LIMIT) {
-    const staleKey = tokenKeyQueue.shift();
-    if (staleKey) {
-      tokenCountCache.delete(staleKey);
-    }
+  if (
+    normalized.length <= TOKENIZER_TEXT_LIMIT &&
+    !pendingTokenCountRequests.has(cacheKey) &&
+    !tokenCountRequestsInFlight.has(cacheKey)
+  ) {
+    pendingTokenCountRequests.set(cacheKey, {
+      text: normalized,
+      sessionId: activeTokenSessionId
+    });
+    scheduleTokenCountBatch();
   }
 
   return count;
@@ -953,12 +1586,12 @@ function getNativeMessageKey(element: HTMLElement): string | null {
   addCandidate(element.querySelector<HTMLElement>("[data-message-id]"));
   addCandidate(element.querySelector<HTMLElement>("[data-turn-id]"));
   addCandidate(element.querySelector<HTMLElement>("img, picture, canvas, video"));
-  addCandidate(element.querySelector<HTMLElement>('article[data-testid^="conversation-turn"]'));
-  addCandidate(element.querySelector<HTMLElement>('[data-testid^="conversation-turn"]'));
+  addCandidate(element.querySelector<HTMLElement>('article[data-testid*="conversation-turn" i]'));
+  addCandidate(element.querySelector<HTMLElement>('[data-testid*="conversation-turn" i]'));
   addCandidate(element.closest<HTMLElement>("[data-message-id]"));
   addCandidate(element.closest<HTMLElement>("[data-turn-id]"));
-  addCandidate(element.closest<HTMLElement>('article[data-testid^="conversation-turn"]'));
-  addCandidate(element.closest<HTMLElement>('[data-testid^="conversation-turn"]'));
+  addCandidate(element.closest<HTMLElement>('article[data-testid*="conversation-turn" i]'));
+  addCandidate(element.closest<HTMLElement>('[data-testid*="conversation-turn" i]'));
   addCandidate(element.closest<HTMLElement>("[data-testid]"));
   addCandidate(element.closest<HTMLElement>("[id]"));
 
@@ -1008,11 +1641,31 @@ function getNodeSessionAnchorId(element: HTMLElement): string {
 
 function getMessageAnchorElement(element: HTMLElement): HTMLElement {
   return (
-    element.closest<HTMLElement>('article[data-testid^="conversation-turn"]') ??
-    element.closest<HTMLElement>('[data-testid^="conversation-turn"]') ??
-    element.closest<HTMLElement>("[data-message-author-role]") ??
+    element.closest<HTMLElement>('article[data-testid*="conversation-turn" i]') ??
+    element.closest<HTMLElement>('[data-testid*="conversation-turn" i]') ??
+    element.closest<HTMLElement>("[data-turn-id]") ??
+    element.closest<HTMLElement>("[data-message-id]") ??
+    element.closest<HTMLElement>(CHATGPT_MESSAGE_NODE_SELECTOR) ??
     element
   );
+}
+
+function markMessageRole(element: HTMLElement, role: Role) {
+  const anchorElement = getMessageAnchorElement(element);
+  const nativeRoleSelector = `[data-message-author-role="${role}"]`;
+  if (
+    element.matches(nativeRoleSelector) ||
+    Boolean(element.querySelector(nativeRoleSelector)) ||
+    anchorElement.matches(nativeRoleSelector) ||
+    Boolean(anchorElement.querySelector(nativeRoleSelector))
+  ) {
+    element.removeAttribute(MESSAGE_ROLE_ATTR);
+    anchorElement.removeAttribute(MESSAGE_ROLE_ATTR);
+    return;
+  }
+
+  element.setAttribute(MESSAGE_ROLE_ATTR, role);
+  anchorElement.setAttribute(MESSAGE_ROLE_ATTR, role);
 }
 
 function getStableAnchorId(message: ParsedMessage): string {
@@ -1043,10 +1696,10 @@ function getNativeTurnOrder(element: HTMLElement): number | null {
   };
 
   addCandidate(element);
-  addCandidate(element.closest<HTMLElement>('article[data-testid^="conversation-turn"]'));
-  addCandidate(element.closest<HTMLElement>('[data-testid^="conversation-turn"]'));
-  addCandidate(element.querySelector<HTMLElement>('article[data-testid^="conversation-turn"]'));
-  addCandidate(element.querySelector<HTMLElement>('[data-testid^="conversation-turn"]'));
+  addCandidate(element.closest<HTMLElement>('article[data-testid*="conversation-turn" i]'));
+  addCandidate(element.closest<HTMLElement>('[data-testid*="conversation-turn" i]'));
+  addCandidate(element.querySelector<HTMLElement>('article[data-testid*="conversation-turn" i]'));
+  addCandidate(element.querySelector<HTMLElement>('[data-testid*="conversation-turn" i]'));
   addCandidate(element.closest<HTMLElement>("[data-turn-index], [data-message-index], [data-index], [aria-posinset]"));
 
   for (const candidate of candidates) {
@@ -1129,19 +1782,7 @@ function summarizeAnswer(text: string): string {
 }
 
 function getNavigatorDisplayTitle(item: NavigatorItem): string {
-  const customTitle = normalizeText(item.customTitle || "");
-  return customTitle || item.promptPreview;
-}
-
-function getNavigatorSearchText(item: NavigatorItem): string {
-  return [
-    item.promptPreview,
-    item.answerSummary,
-    item.customTitle || "",
-    item.note || "",
-    getNavigatorGroupLabel(inferNavigatorGroupKind(item), "zh-CN"),
-    getNavigatorGroupLabel(inferNavigatorGroupKind(item), "en")
-  ].join(" ");
+  return item.promptPreview;
 }
 
 function getNavigatorGroupLabel(kind: NavigatorGroupKind, language: AppLanguage): string {
@@ -1178,7 +1819,7 @@ function getNavigatorGroupLabel(kind: NavigatorGroupKind, language: AppLanguage)
 }
 
 function inferNavigatorGroupKind(item: NavigatorItem): NavigatorGroupKind {
-  const text = `${item.promptPreview} ${item.answerSummary} ${item.customTitle || ""} ${item.note || ""}`.toLowerCase();
+  const text = `${item.promptPreview} ${item.answerSummary}`.toLowerCase();
 
   if (/(报错|錯誤|错误|失敗|失败|异常|例外|bug|崩溃|崩潰|error|exception|failed|failure|traceback|stack trace)/i.test(text)) {
     return "errors";
@@ -1229,24 +1870,6 @@ function buildNavigatorGroups(items: NavigatorItem[], language: AppLanguage): Na
   return groups;
 }
 
-function filterNavigatorGroups(groups: NavigatorGroup[], visibleItemIds: Set<string>): NavigatorGroup[] {
-  return groups
-    .map((group) => {
-      const visibleItems = group.items.filter((item) => visibleItemIds.has(item.id));
-      if (visibleItems.length === 0) {
-        return null;
-      }
-
-      return {
-        ...group,
-        items: visibleItems,
-        tokenTotal: visibleItems.reduce((sum, item) => sum + item.totalTokens, 0),
-        heatLevel: visibleItems.reduce<number>((heat, item) => Math.max(heat, item.heatLevel), 0) as HeatLevel
-      };
-    })
-    .filter((group): group is NavigatorGroup => Boolean(group));
-}
-
 function formatSupplementalContextText(context: SupplementalContext): string {
   const text = normalizeText(context.text);
   if (!text) {
@@ -1270,7 +1893,7 @@ function isContextCoveredByMessage(context: SupplementalContext, messages: Parse
   });
 }
 
-function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorResult {
+function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorResult {
   const adapter = getAdapter();
   const collection = adapter.collect();
   const contextMessages: ParsedMessage[] = collection.supplementalContexts
@@ -1290,6 +1913,7 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
+    markMessageRole(message.element, message.role);
     const id = getStableAnchorId(message);
     const tokenBreakdown = getTokenBreakdown(message, id);
     const domOrder = getMessageDomOrder(message, index);
@@ -1318,7 +1942,6 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
         text: message.text,
         turnIndex: Math.max(1, items.length),
         domOrder,
-        favorite: false,
         heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget),
         mounted: true
       });
@@ -1337,7 +1960,6 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       answerTokens += tokenBreakdowns[nextIndex]?.total ?? 0;
     }
 
-    const favorite = Boolean(favorites[id]);
     const totalTokens = tokenBreakdown.total + answerTokens;
     const heatLevel = getHeatLevel(totalTokens, cumulativeTokens + answerTokens, tokenBudget);
 
@@ -1347,12 +1969,10 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       answerSummary: summarizeAnswer(answerParts.join("\n\n")),
       turnIndex: items.length + 1,
       domOrder,
-      favorite,
       promptTokens: tokenBreakdown.total,
       answerTokens,
       totalTokens,
       heatLevel,
-      site: adapter.id,
       mounted: true
     });
 
@@ -1365,7 +1985,6 @@ function buildNavigatorData(favorites: Record<string, true>, tokenBudget = DEFAU
       text: message.text,
       turnIndex: items.length,
       domOrder,
-      favorite,
       heatLevel,
       mounted: true
     });
@@ -1403,13 +2022,6 @@ function getMapEntryKey(entry: MessageMapEntry): string {
   );
 }
 
-function applyFavorite(item: NavigatorItem, favorites: Record<string, true>): NavigatorItem {
-  return {
-    ...item,
-    favorite: Boolean(favorites[item.id] || item.favorite)
-  };
-}
-
 function getNavigatorSortOrder(item: NavigatorItem): number {
   return Number.isFinite(item.domOrder) ? item.domOrder : item.turnIndex;
 }
@@ -1435,12 +2047,11 @@ function mergeNavigatorData(
   previousEntries: MessageMapEntry[],
   currentItems: NavigatorItem[],
   currentEntries: MessageMapEntry[],
-  favorites: Record<string, true>,
   previousScrollY: number
 ): Pick<BuildNavigatorResult, "items" | "mapEntries"> {
   if (previousItems.length === 0) {
     return {
-      items: normalizeNavigatorOrder(currentItems.map((item) => applyFavorite({ ...item, mounted: true }, favorites))),
+      items: normalizeNavigatorOrder(currentItems.map((item) => ({ ...item, mounted: true }))),
       mapEntries: normalizeMapEntryOrder(currentEntries.map((entry) => ({ ...entry, mounted: true })))
     };
   }
@@ -1471,17 +2082,12 @@ function mergeNavigatorData(
     }
 
     currentToMergedId.set(item.id, mergedId);
-    const mergedItem = applyFavorite(
-      {
-        ...(matched ?? item),
-        ...item,
-        id: mergedId,
-        customTitle: matched?.customTitle ?? item.customTitle,
-        note: matched?.note ?? item.note,
-        mounted: true
-      },
-      favorites
-    );
+    const mergedItem: NavigatorItem = {
+      ...(matched ?? item),
+      ...item,
+      id: mergedId,
+      mounted: true
+    };
 
     currentMergedItems.push(mergedItem);
     if (matched) {
@@ -1492,9 +2098,10 @@ function mergeNavigatorData(
   }
 
   const result = previousItems.map((item) =>
-    replacementByPreviousId.get(item.id) ?? applyFavorite({ ...item, mounted: false }, favorites)
+    replacementByPreviousId.get(item.id) ?? { ...item, mounted: false }
   );
 
+  const currentScrollTop = getCurrentConversationScrollTop();
   const insertFreshItem = (item: NavigatorItem, currentIndex: number) => {
     if (result.some((existing) => existing.id === item.id || getNavigatorItemKey(existing) === getNavigatorItemKey(item))) {
       return;
@@ -1520,7 +2127,7 @@ function mergeNavigatorData(
       }
     }
 
-    if (window.scrollY < previousScrollY) {
+    if (currentScrollTop < previousScrollY) {
       result.unshift(item);
       return;
     }
@@ -1536,19 +2143,17 @@ function mergeNavigatorData(
 
   return {
     items: normalizeNavigatorOrder(result),
-    mapEntries: normalizeMapEntryOrder(mergeMapEntries(previousEntries, currentEntries, currentToMergedId, favorites))
+    mapEntries: normalizeMapEntryOrder(mergeMapEntries(previousEntries, currentEntries, currentToMergedId))
   };
 }
 
 function mergeMapEntries(
   previousEntries: MessageMapEntry[],
   currentEntries: MessageMapEntry[],
-  currentToMergedId: Map<string, string>,
-  favorites: Record<string, true>
+  currentToMergedId: Map<string, string>
 ): MessageMapEntry[] {
   const result = previousEntries.map((entry) => ({
     ...entry,
-    favorite: Boolean(favorites[entry.id] || entry.favorite),
     mounted: false
   }));
 
@@ -1562,7 +2167,6 @@ function mergeMapEntries(
     const nextEntry: MessageMapEntry = {
       ...entry,
       id,
-      favorite: Boolean(favorites[id] || entry.favorite),
       mounted: true
     };
     const existingIndex = result.findIndex(
@@ -1579,60 +2183,6 @@ function mergeMapEntries(
 
   currentEntries.forEach(replaceOrAdd);
   return result;
-}
-
-function restoreItemsFromRecord(record: StoredConversationRecord | undefined, favorites: Record<string, true>): NavigatorItem[] {
-  if (!record?.nodes.length) {
-    return [];
-  }
-
-  return normalizeNavigatorOrder(record.nodes.map((node) => restoreItemFromNode(node, favorites)));
-}
-
-function restoreItemFromNode(node: StoredNavigatorNode, favorites: Record<string, true>): NavigatorItem {
-  return {
-    id: node.id,
-    promptPreview: node.promptPreview,
-    answerSummary: node.answerSummary,
-    customTitle: node.customTitle,
-    note: node.note,
-    turnIndex: node.turnIndex,
-    domOrder: typeof node.domOrder === "number" && Number.isFinite(node.domOrder) ? node.domOrder : node.turnIndex,
-    favorite: Boolean(favorites[node.id] || node.favorite),
-    promptTokens: node.promptTokens ?? 0,
-    answerTokens: node.answerTokens ?? 0,
-    totalTokens: node.totalTokens ?? (node.promptTokens ?? 0) + (node.answerTokens ?? 0),
-    heatLevel: (node.heatLevel ?? 0) as HeatLevel,
-    site: "chatgpt",
-    mounted: false
-  };
-}
-
-function restoreMapEntriesFromItems(items: NavigatorItem[]): MessageMapEntry[] {
-  return items.map((item) => ({
-    id: item.id,
-    role: "user",
-    tokenCount: item.totalTokens,
-    codeTokens: 0,
-    tableTokens: 0,
-    text: `${item.promptPreview} ${item.answerSummary}`,
-    turnIndex: item.turnIndex,
-    domOrder: item.domOrder,
-    favorite: item.favorite,
-    heatLevel: item.heatLevel,
-    mounted: false
-  }));
-}
-
-function scrollToNavigatorItem(id: string, animate = true) {
-  const element = anchorRegistry.get(id) ?? document.querySelector<HTMLElement>(`[${ANCHOR_ATTR}="${id}"]`);
-  if (!element) {
-    return;
-  }
-
-  const anchorElement = getMessageAnchorElement(element);
-  jumpToElement(anchorElement, animate);
-  flashAnchor(anchorElement);
 }
 
 function scrollToChatBoundary(edge: "top" | "bottom", animate = true) {
@@ -1699,8 +2249,8 @@ function isConversationAnchorElement(element: HTMLElement): boolean {
   }
 
   return Boolean(
-    element.matches('article[data-testid^="conversation-turn"], [data-testid^="conversation-turn"], [data-message-author-role]') ||
-      element.querySelector('[data-message-author-role]')
+    element.matches(CHATGPT_TURN_OR_MARKER_SELECTOR) ||
+      Boolean(element.querySelector(CHATGPT_MESSAGE_OR_MARKER_SELECTOR))
   );
 }
 
@@ -1807,12 +2357,16 @@ function cancelNavigationAnimation() {
   navigationAnimationFrame = 0;
 }
 
+function isScrollableElement(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element);
+  const canScroll = /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
+  return canScroll && element.clientHeight > 48 && element.scrollHeight > element.clientHeight + 4;
+}
+
 function getScrollContainer(element: HTMLElement): HTMLElement | Window {
-  let current = element.parentElement;
+  let current: HTMLElement | null = element;
   while (current && current !== document.body && current !== document.documentElement) {
-    const style = window.getComputedStyle(current);
-    const canScroll = /(auto|scroll|overlay)/.test(`${style.overflowY} ${style.overflow}`);
-    if (canScroll && current.scrollHeight > current.clientHeight + 4) {
+    if (isScrollableElement(current)) {
       return current;
     }
     current = current.parentElement;
@@ -1821,30 +2375,106 @@ function getScrollContainer(element: HTMLElement): HTMLElement | Window {
   return window;
 }
 
+function getContainerViewportRect(scrollContainer: HTMLElement | Window): { top: number; bottom: number; height: number } {
+  if (scrollContainer === window) {
+    return {
+      top: 0,
+      bottom: window.innerHeight,
+      height: Math.max(1, window.innerHeight)
+    };
+  }
+
+  const rect = (scrollContainer as HTMLElement).getBoundingClientRect();
+  const top = Math.max(0, rect.top);
+  const bottom = Math.min(window.innerHeight, rect.bottom);
+  return {
+    top,
+    bottom,
+    height: Math.max(1, bottom - top)
+  };
+}
+
+function getContainerScrollTop(scrollContainer: HTMLElement | Window): number {
+  return scrollContainer === window ? window.scrollY : (scrollContainer as HTMLElement).scrollTop;
+}
+
+function getContainerScrollHeight(scrollContainer: HTMLElement | Window): number {
+  if (scrollContainer === window) {
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    return Math.max(scrollingElement.scrollHeight, document.documentElement.scrollHeight, document.body.scrollHeight);
+  }
+
+  return (scrollContainer as HTMLElement).scrollHeight;
+}
+
+function getContainerClientHeight(scrollContainer: HTMLElement | Window): number {
+  return scrollContainer === window ? window.innerHeight : (scrollContainer as HTMLElement).clientHeight;
+}
+
+function getPrimaryConversationScrollContainer(): HTMLElement | Window {
+  const firstAnchor = getConversationAnchorElements()[0];
+  if (firstAnchor) {
+    return getScrollContainer(firstAnchor);
+  }
+
+  const main = document.querySelector<HTMLElement>("main");
+  return main ? getScrollContainer(main) : window;
+}
+
+function getCurrentConversationScrollTop(): number {
+  return getContainerScrollTop(getPrimaryConversationScrollContainer());
+}
+
+function isElementVisibleInContainer(element: HTMLElement, scrollContainer: HTMLElement | Window): boolean {
+  const rect = element.getBoundingClientRect();
+  const viewport = getContainerViewportRect(scrollContainer);
+  return rect.bottom >= viewport.top + 10 && rect.top <= viewport.bottom - 10;
+}
+
+function scrollElementIntoView(element: HTMLElement, animate: boolean) {
+  try {
+    element.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: animate ? "smooth" : "auto"
+    });
+  } catch {
+    element.scrollIntoView();
+  }
+}
+
 function verifyJump(element: HTMLElement, scrollContainer: HTMLElement | Window, delay = 80) {
   window.setTimeout(() => {
+    const activeScrollContainer = document.body.contains(element) ? getScrollContainer(element) : scrollContainer;
     const rect = element.getBoundingClientRect();
-    const topLimit = scrollContainer === window
-      ? 72
-      : (scrollContainer as HTMLElement).getBoundingClientRect().top + 16;
-    const bottomLimit = scrollContainer === window
-      ? window.innerHeight - 96
-      : (scrollContainer as HTMLElement).getBoundingClientRect().bottom - 16;
+    const viewport = getContainerViewportRect(activeScrollContainer);
+    const topLimit = activeScrollContainer === window ? viewport.top + 72 : viewport.top + 16;
+    const bottomLimit = activeScrollContainer === window ? viewport.bottom - 96 : viewport.bottom - 16;
 
     if (rect.bottom >= topLimit && rect.top <= bottomLimit) {
       return;
     }
 
-    if (scrollContainer === window) {
+    if (activeScrollContainer === window) {
       const top = Math.max(0, window.scrollY + rect.top - topLimit);
       scrollWindowTo(top, false);
+      window.setTimeout(() => {
+        if (!isElementVisibleInContainer(element, getScrollContainer(element))) {
+          scrollElementIntoView(element, false);
+        }
+      }, 80);
       return;
     }
 
-    const scrollElement = scrollContainer as HTMLElement;
+    const scrollElement = activeScrollContainer as HTMLElement;
     const containerRect = scrollElement.getBoundingClientRect();
     const top = Math.max(0, scrollElement.scrollTop + rect.top - containerRect.top - 16);
     scrollElementTo(scrollElement, top, false);
+    window.setTimeout(() => {
+      if (!isElementVisibleInContainer(element, getScrollContainer(element))) {
+        scrollElementIntoView(element, false);
+      }
+    }, 80);
   }, delay);
 }
 
@@ -1889,53 +2519,7 @@ function installRouteEvents() {
   };
 }
 
-function persistRecord(
-  settings: NavigatorSettings,
-  pageKey: string,
-  items: NavigatorItem[],
-  favorites: Record<string, true>,
-  health?: AdapterHealth,
-  groupCollapsed?: Record<string, true>
-): Promise<boolean> {
-  if (settings.cacheMode === "off" || isVolatilePageKey(pageKey)) {
-    return Promise.resolve(true);
-  }
-
-  const record: StoredConversationRecord = {
-    schemaVersion: 1,
-    pageKey,
-    url: location.href,
-    host: location.hostname,
-    title: document.title || getAdapter().label,
-    updatedAt: Date.now(),
-    favorites,
-    health: health ? toStoredAdapterHealth(health) : undefined,
-    nodes: items.map((item) => ({
-      id: item.id,
-      promptPreview: item.promptPreview,
-      answerSummary: item.answerSummary,
-      customTitle: normalizeText(item.customTitle || "") || undefined,
-      note: normalizeText(item.note || "") || undefined,
-      turnIndex: item.turnIndex,
-      domOrder: item.domOrder,
-      favorite: item.favorite,
-      promptTokens: item.promptTokens,
-      answerTokens: item.answerTokens,
-      totalTokens: item.totalTokens,
-      heatLevel: item.heatLevel,
-      updatedAt: Date.now()
-    })),
-    groupCollapsed
-  };
-
-  if (settings.cacheMode === "page") {
-    return Promise.resolve(writePageStorageRecord(pageKey, record));
-  }
-
-  return storageSet({ [pageKey]: record });
-}
-
-function toStoredAdapterHealth(health: AdapterHealth): StoredAdapterHealth {
+function toPageAdapterHealth(health: AdapterHealth): PageAdapterHealth {
   return {
     status: health.status,
     reason: health.reason,
@@ -1948,20 +2532,180 @@ function toStoredAdapterHealth(health: AdapterHealth): StoredAdapterHealth {
   };
 }
 
-function makeRecordSignature(
-  items: NavigatorItem[],
-  favorites: Record<string, true>,
-  groupCollapsed: Record<string, true> = {}
-): string {
-  const favoriteIds = Object.keys(favorites).sort().join(",");
-  const collapsedIds = Object.keys(groupCollapsed).sort().join(",");
-  const itemSignature = items
-    .map((item) =>
-      `${item.id}:${item.promptPreview}:${item.answerSummary}:${item.customTitle || ""}:${item.note || ""}:${item.totalTokens}:${item.favorite ? "1" : "0"}`
-    )
-    .join("|");
+function getPageSourceMeta() {
+  return {
+    sourceUrl: location.href,
+    sourceTitle: document.title || getAdapter().label,
+    pageKey: getPageId()
+  };
+}
 
-  return `${favoriteIds}::${collapsedIds}::${itemSignature}`;
+function getMaterialTitle(text: string, fallback: string): string {
+  return compactPreview(normalizeText(text), 72) || fallback;
+}
+
+function getAllReadableCodeBlocks(): HTMLPreElement[] {
+  return safeQueryAll("main pre")
+    .filter((element): element is HTMLPreElement => element instanceof HTMLPreElement)
+    .filter((pre) => !pre.closest(`#${ROOT_ID}`))
+    .filter((pre) => {
+      const text = extractCodeBlockText(pre);
+      if (!text.trim()) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(pre);
+      return style.display !== "none" && style.visibility !== "hidden";
+    });
+}
+
+function createPageMaterials(): PageMaterial[] {
+  const source = getPageSourceMeta();
+  const collection = getAdapter().collect();
+  const prompts = collection.messages
+    .filter((message) => message.role === "user")
+    .slice(0, 80)
+    .map<PageMaterial>((message, index) => {
+      const text = normalizeText(message.text).slice(0, 200000);
+      return {
+        id: `prompt-${stableHash(`${source.pageKey}:${index}:${text}`)}`,
+        kind: "prompt",
+        title: getMaterialTitle(text, `Prompt ${index + 1}`),
+        text,
+        ...source
+      };
+    })
+    .filter((material) => material.text.length > 0);
+
+  const codeBlocks = getAllReadableCodeBlocks()
+    .slice(0, 120)
+    .map<PageMaterial>((pre, index) => {
+      const text = extractCodeBlockText(pre).slice(0, 200000);
+      const language = detectCodeLanguage(pre);
+      const filename = detectCodeFilename(pre, index + 1, language);
+      return {
+        id: `code-${stableHash(`${source.pageKey}:${index}:${filename}:${text}`)}`,
+        kind: "code",
+        title: filename || getMaterialTitle(text, `Code ${index + 1}`),
+        text,
+        language,
+        filename,
+        ...source
+      };
+    })
+    .filter((material) => material.text.length > 0);
+
+  return [...prompts, ...codeBlocks];
+}
+
+function createSelectionMaterial(): SelectionMaterial | null {
+  const selection = window.getSelection();
+  const rawText = selection?.toString() ?? "";
+  const text = rawText.trim();
+  if (!selection || !text) {
+    return null;
+  }
+
+  const source = getPageSourceMeta();
+  const parentNode = selection.anchorNode instanceof HTMLElement
+    ? selection.anchorNode
+    : selection.anchorNode?.parentNode instanceof HTMLElement
+      ? selection.anchorNode.parentNode
+      : null;
+  const pre = parentNode?.closest<HTMLPreElement>("pre") ?? null;
+
+  if (pre && !pre.closest(`#${ROOT_ID}`)) {
+    const language = detectCodeLanguage(pre);
+    const filename = detectCodeFilename(pre, 1, language);
+    return {
+      id: `selection-code-${stableHash(`${source.pageKey}:${filename}:${text}`)}`,
+      kind: "code",
+      title: filename || getMaterialTitle(text, "Selected code"),
+      text,
+      language,
+      filename,
+      ...source
+    };
+  }
+
+  return {
+    id: `selection-${stableHash(`${source.pageKey}:${text}`)}`,
+    kind: "selection",
+    title: getMaterialTitle(text, "Selected text"),
+    text,
+    ...source
+  };
+}
+
+function createExportMessages(): ExportChatMessage[] {
+  const collection = getAdapter().collect();
+  return sortByDomOrder(collection.messages)
+    .map<ExportChatMessage>((message, index) => {
+      const text = normalizeText(message.text);
+      return {
+        id: `message-${stableHash(`${message.role}:${index}:${text}`)}`,
+        role: message.role,
+        text,
+        turnIndex: getNativeTurnOrder(getMessageAnchorElement(message.element)) ?? index + 1
+      };
+    })
+    .filter((message) => message.text.length > 0);
+}
+
+function createExportCodeBlocks(): ExportCodeBlock[] {
+  const source = getPageSourceMeta();
+  return getAllReadableCodeBlocks()
+    .slice(0, 160)
+    .map<ExportCodeBlock>((pre, index) => {
+      const text = extractCodeBlockText(pre);
+      const language = detectCodeLanguage(pre);
+      const filename = detectCodeFilename(pre, index + 1, language);
+      return {
+        id: `export-code-${stableHash(`${source.pageKey}:${index}:${filename}:${text}`)}`,
+        text,
+        language,
+        filename
+      };
+    })
+    .filter((block) => block.text.trim().length > 0);
+}
+
+function createExportNodes(): ExportNavigatorNode[] {
+  const stateItems = latestNavigatorExportState.items.length
+    ? latestNavigatorExportState.items
+    : buildNavigatorData(DEFAULT_TOKEN_BUDGET).items;
+  const groups = buildNavigatorGroups(stateItems, latestNavigatorExportState.language);
+  const groupByItemId = new Map<string, string>();
+  for (const group of groups) {
+    for (const item of group.items) {
+      groupByItemId.set(item.id, group.label);
+    }
+  }
+
+  return stateItems.map((item) => ({
+    id: item.id,
+    title: getNavigatorDisplayTitle(item),
+    promptPreview: item.promptPreview,
+    answerSummary: item.answerSummary,
+    groupLabel: groupByItemId.get(item.id) ?? getNavigatorGroupLabel(inferNavigatorGroupKind(item), latestNavigatorExportState.language),
+    turnIndex: item.turnIndex,
+    promptTokens: item.promptTokens,
+    answerTokens: item.answerTokens,
+    totalTokens: item.totalTokens
+  }));
+}
+
+function createExportSnapshot(): ExportSnapshot {
+  const source = getPageSourceMeta();
+  return {
+    title: source.sourceTitle,
+    url: source.sourceUrl,
+    pageKey: source.pageKey,
+    exportedAt: Date.now(),
+    messages: createExportMessages(),
+    codeBlocks: createExportCodeBlocks(),
+    nodes: createExportNodes()
+  };
 }
 
 function formatTokenCount(value: number): string {
@@ -2016,6 +2760,12 @@ interface TableAreaSelection {
   endColumn: number;
 }
 
+interface TablePointerSnapshot {
+  x: number;
+  y: number;
+  time: number;
+}
+
 interface TableCopyLabels {
   copy: string;
   copied: string;
@@ -2042,6 +2792,10 @@ const TABLE_COPY_TOOLBAR_HEIGHT = 104;
 const TABLE_COPY_MENU_WIDTH = 224;
 const TABLE_COPY_RIGHT_RAIL_RESERVE = 96;
 const TABLE_COPY_OUTSIDE_GAP = 14;
+const TABLE_COPY_POINTER_TTL_MS = 12000;
+const TABLE_COPY_POINTER_RIGHT_EXTENSION = TABLE_COPY_OUTSIDE_GAP + TABLE_COPY_TOOLBAR_WIDTH + 96;
+const TABLE_COPY_POINTER_LEFT_TOLERANCE = 12;
+const TABLE_COPY_POINTER_VERTICAL_TOLERANCE = 22;
 const SCROLL_JUMP_WIDTH = 42;
 const SCROLL_JUMP_HEIGHT = 76;
 const tableCopyIdRegistry = new WeakMap<HTMLTableElement, string>();
@@ -2186,24 +2940,179 @@ function getTableColumnCount(table: HTMLTableElement): number {
   return columnCount;
 }
 
-function findCopyableTables(): HTMLTableElement[] {
-  return safeQueryAll("main table")
-    .filter((element): element is HTMLTableElement => element instanceof HTMLTableElement)
-    .filter(isCopyableTable);
+function getTableCellCount(table: HTMLTableElement): number {
+  return Array.from(table.rows).reduce((sum, row) => sum + row.cells.length, 0);
 }
 
-function getNavigatorAvoidRect(navigatorCollapsed: boolean): DOMRect | null {
-  if (navigatorCollapsed) {
+function getTableTextSignature(table: HTMLTableElement): string {
+  const matrixText = Array.from(table.rows)
+    .map((row) =>
+      Array.from(row.cells)
+        .map((cell) => normalizeText(cell.textContent || ""))
+        .join("\u001f")
+    )
+    .join("\u001e");
+
+  return stableHash(matrixText || normalizeText(table.textContent || ""));
+}
+
+function getRectOverlapRatio(first: DOMRect, second: DOMRect): number {
+  const left = Math.max(first.left, second.left);
+  const right = Math.min(first.right, second.right);
+  const top = Math.max(first.top, second.top);
+  const bottom = Math.min(first.bottom, second.bottom);
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  const overlapArea = width * height;
+  const smallerArea = Math.min(first.width * first.height, second.width * second.height);
+
+  return smallerArea > 0 ? overlapArea / smallerArea : 0;
+}
+
+function areTableRectsVisuallySame(first: DOMRect, second: DOMRect): boolean {
+  const edgeTolerance = 4;
+  if (
+    Math.abs(first.left - second.left) <= edgeTolerance &&
+    Math.abs(first.top - second.top) <= edgeTolerance &&
+    Math.abs(first.right - second.right) <= edgeTolerance &&
+    Math.abs(first.bottom - second.bottom) <= edgeTolerance
+  ) {
+    return true;
+  }
+
+  return getRectOverlapRatio(first, second) >= 0.97;
+}
+
+function areDuplicateCopyableTables(first: HTMLTableElement, second: HTMLTableElement): boolean {
+  const firstRect = first.getBoundingClientRect();
+  const secondRect = second.getBoundingClientRect();
+
+  return areTableRectsVisuallySame(firstRect, secondRect) &&
+    getTableTextSignature(first) === getTableTextSignature(second);
+}
+
+function pickPreferredCopyableTable(first: HTMLTableElement, second: HTMLTableElement): HTMLTableElement {
+  const firstCellCount = getTableCellCount(first);
+  const secondCellCount = getTableCellCount(second);
+  if (firstCellCount !== secondCellCount) {
+    return secondCellCount > firstCellCount ? second : first;
+  }
+
+  if (first.rows.length !== second.rows.length) {
+    return second.rows.length > first.rows.length ? second : first;
+  }
+
+  if (first.contains(second)) {
+    return second;
+  }
+
+  return first;
+}
+
+function dedupeCopyableTables(tables: HTMLTableElement[]): HTMLTableElement[] {
+  const unique: HTMLTableElement[] = [];
+
+  for (const table of tables) {
+    const existingIndex = unique.findIndex((candidate) => areDuplicateCopyableTables(candidate, table));
+    if (existingIndex < 0) {
+      unique.push(table);
+      continue;
+    }
+
+    unique[existingIndex] = pickPreferredCopyableTable(unique[existingIndex], table);
+  }
+
+  return unique;
+}
+
+function findCopyableTables(): HTMLTableElement[] {
+  const candidates = safeQueryAll("main table")
+    .filter((element): element is HTMLTableElement => element instanceof HTMLTableElement)
+    .filter(isCopyableTable);
+
+  return dedupeCopyableTables(candidates);
+}
+
+function getCopyableTableFromTarget(target: EventTarget | null): HTMLTableElement | null {
+  if (!(target instanceof Element) || target.closest(`#${ROOT_ID}`)) {
     return null;
   }
 
-  const shell = document.querySelector<HTMLElement>(`#${ROOT_ID} .cnav-shell:not(.is-collapsed)`);
-  const rect = shell?.getBoundingClientRect();
-  if (!rect || rect.width < 80 || rect.height < 80) {
+  const table = target.closest("table");
+  return table instanceof HTMLTableElement && isCopyableTable(table) ? table : null;
+}
+
+function getFreshTablePointer(pointer: TablePointerSnapshot | null): TablePointerSnapshot | null {
+  if (!pointer || Date.now() - pointer.time > TABLE_COPY_POINTER_TTL_MS) {
     return null;
   }
 
-  return rect;
+  return pointer;
+}
+
+function getTablePointerScore(table: HTMLTableElement, pointer: TablePointerSnapshot): number {
+  const rect = getClippedTableRect(table);
+  const left = rect.left - TABLE_COPY_POINTER_LEFT_TOLERANCE;
+  const right = rect.right + TABLE_COPY_POINTER_RIGHT_EXTENSION;
+  const top = rect.top - TABLE_COPY_POINTER_VERTICAL_TOLERANCE;
+  const bottom = rect.bottom + TABLE_COPY_POINTER_VERTICAL_TOLERANCE;
+
+  if (pointer.x < left || pointer.x > right || pointer.y < top || pointer.y > bottom) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const horizontalDistance = pointer.x < rect.left
+    ? rect.left - pointer.x
+    : pointer.x > rect.right
+      ? pointer.x - rect.right
+      : 0;
+  const verticalDistance = pointer.y < rect.top
+    ? rect.top - pointer.y
+    : pointer.y > rect.bottom
+      ? pointer.y - rect.bottom
+      : 0;
+  const centerDistance = Math.abs(pointer.y - (rect.top + rect.bottom) / 2);
+
+  return verticalDistance * 6 + horizontalDistance * 0.4 + centerDistance * 0.04;
+}
+
+function pickCopyableTableNearPointer(
+  tables: HTMLTableElement[],
+  pointer: TablePointerSnapshot
+): HTMLTableElement | null {
+  let bestTable: HTMLTableElement | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const table of tables) {
+    const score = getTablePointerScore(table, pointer);
+    if (score < bestScore) {
+      bestScore = score;
+      bestTable = table;
+    }
+  }
+
+  return Number.isFinite(bestScore) ? bestTable : null;
+}
+
+function pickActiveCopyableTable(
+  tables: HTMLTableElement[],
+  preferredTable: HTMLTableElement | null,
+  pointer: TablePointerSnapshot | null,
+  forcedTableId: string | null
+): HTMLTableElement | null {
+  if (forcedTableId) {
+    const forcedTable = tables.find((table) => getTableCopyId(table) === forcedTableId);
+    if (forcedTable) {
+      return forcedTable;
+    }
+  }
+
+  if (preferredTable && tables.includes(preferredTable)) {
+    return preferredTable;
+  }
+
+  const freshPointer = getFreshTablePointer(pointer);
+  return freshPointer ? pickCopyableTableNearPointer(tables, freshPointer) : null;
 }
 
 function isRectVisible(rect: DOMRect): boolean {
@@ -2219,12 +3128,85 @@ function isCompactFloatingControlRect(rect: DOMRect): boolean {
   return rect.width <= 150 && rect.height <= 120;
 }
 
+const OFFICIAL_POPOVER_SELECTORS = [
+  '[role="menu"]',
+  '[role="dialog"]',
+  '[role="listbox"]',
+  "[data-radix-popper-content-wrapper]",
+  "[data-radix-menu-content]",
+  "[data-radix-popover-content]",
+  '[data-state="open"][data-side]',
+  '[data-state="open"][data-align]',
+  '[class*="popover" i]',
+  '[class*="dropdown" i]',
+  '[class*="menu" i]'
+].join(",");
+
+function isOfficialPopoverElement(element: HTMLElement): boolean {
+  if (
+    element.closest(`#${ROOT_ID}`) ||
+    element === document.body ||
+    element === document.documentElement ||
+    element.closest(`main ${CHATGPT_MESSAGE_OR_MARKER_SELECTOR}`)
+  ) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (!isRectVisible(rect) || rect.width < 32 || rect.height < 28) {
+    return false;
+  }
+
+  if (
+    rect.width > window.innerWidth * 0.52 &&
+    rect.height > window.innerHeight * 0.52 &&
+    hasCanvasModeEvidence()
+  ) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(element);
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    Number(style.opacity) === 0 ||
+    element.getAttribute("aria-hidden") === "true" ||
+    element.hidden
+  ) {
+    return false;
+  }
+
+  const role = element.getAttribute("role") || "";
+  const descriptor = [
+    role,
+    element.getAttribute("class") || "",
+    element.getAttribute("data-state") || "",
+    element.getAttribute("data-side") || "",
+    element.getAttribute("data-align") || ""
+  ].join(" ");
+  const explicitPopover = /(menu|dialog|listbox|popover|dropdown|radix|open)/i.test(descriptor) ||
+    element.hasAttribute("data-radix-popper-content-wrapper") ||
+    element.hasAttribute("data-radix-menu-content") ||
+    element.hasAttribute("data-radix-popover-content");
+  if (!explicitPopover) {
+    return false;
+  }
+
+  const zIndex = Number.parseInt(style.zIndex || "0", 10);
+  const floatingLike = /(fixed|absolute|sticky)/.test(style.position) || zIndex >= 10;
+  const nearTopRightMenu = rect.top < 260 && rect.right > window.innerWidth - 420;
+  const modalLike = role === "dialog" && rect.width >= 240 && rect.height >= 120;
+
+  return floatingLike || nearTopRightMenu || modalLike;
+}
+
+function hasOpenOfficialPopover(): boolean {
+  return safeQueryAll(OFFICIAL_POPOVER_SELECTORS).some(isOfficialPopoverElement);
+}
+
 function getFloatingAvoidRects(navigatorCollapsed: boolean): DOMRect[] {
   const rects: DOMRect[] = [];
-  const navigatorRect = getNavigatorAvoidRect(navigatorCollapsed);
-  if (navigatorRect) {
-    rects.push(navigatorRect);
-  }
+  void navigatorCollapsed;
 
   for (const handle of safeQueryAll(`#${ROOT_ID} .cnav-thread-handle`)) {
     const rect = handle.getBoundingClientRect();
@@ -2833,12 +3815,15 @@ function TableCopyLayer({
 }) {
   const labels = useMemo(() => getTableCopyLabels(language), [language]);
   const [overlays, setOverlays] = useState<TableCopyOverlay[]>([]);
+  const [activeTableId, setActiveTableId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [preferredFormat, setPreferredFormat] = useState<TableCopyFormat>(() => readPreferredTableCopyFormat());
   const [copied, setCopied] = useState<{ id: string; format: TableCopyFormat } | null>(null);
   const [hoveredCell, setHoveredCell] = useState<TableCellCoordinate | null>(null);
   const [selectionModeTableId, setSelectionModeTableId] = useState<string | null>(null);
   const [activeSelection, setActiveSelection] = useState<TableAreaSelection | null>(null);
+  const activeTableRef = useRef<HTMLTableElement | null>(null);
+  const pointerSnapshotRef = useRef<TablePointerSnapshot | null>(null);
   const copiedTimerRef = useRef<number | undefined>(undefined);
   const selectionStartRef = useRef<TableCellCoordinate | null>(null);
 
@@ -2850,7 +3835,11 @@ function TableCopyLayer({
       .filter((overlay): overlay is TableCopyOverlay => Boolean(overlay));
 
     setOverlays((current) => (areTableOverlaysEqual(current, nextOverlays) ? current : nextOverlays));
-  }, [navigatorCollapsed]);
+    const forcedTableId = menuId || selectionModeTableId || activeSelection?.tableId || copied?.id || null;
+    const activeTable = pickActiveCopyableTable(tables, activeTableRef.current, pointerSnapshotRef.current, forcedTableId);
+    const nextActiveTableId = activeTable ? getTableCopyId(activeTable) : null;
+    setActiveTableId((current) => (current === nextActiveTableId ? current : nextActiveTableId));
+  }, [activeSelection, copied, menuId, navigatorCollapsed, selectionModeTableId]);
 
   useEffect(() => {
     let frame = 0;
@@ -2865,6 +3854,56 @@ function TableCopyLayer({
       });
     };
 
+    const rememberPointer = (event: PointerEvent, force = false) => {
+      if (event.target instanceof Element && event.target.closest(`#${ROOT_ID}`)) {
+        return false;
+      }
+
+      const current = pointerSnapshotRef.current;
+      pointerSnapshotRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: Date.now()
+      };
+
+      if (force || !current) {
+        return true;
+      }
+
+      return Math.abs(current.x - event.clientX) > 6 || Math.abs(current.y - event.clientY) > 6;
+    };
+
+    const updateActiveTableFromTarget = (target: EventTarget | null) => {
+      const table = getCopyableTableFromTarget(target);
+      if (table) {
+        if (activeTableRef.current === table) {
+          return false;
+        }
+
+        activeTableRef.current = table;
+        return true;
+      }
+
+      if (target instanceof Element && target.closest(`#${ROOT_ID}`)) {
+        return false;
+      }
+
+      if (!activeTableRef.current) {
+        return false;
+      }
+
+      activeTableRef.current = null;
+      return true;
+    };
+
+    const handlePointerOver = (event: PointerEvent) => {
+      const pointerChanged = rememberPointer(event, true);
+      const activeChanged = updateActiveTableFromTarget(event.target);
+      if (pointerChanged || activeChanged) {
+        scheduleUpdate();
+      }
+    };
+
     const observer = new MutationObserver(scheduleUpdate);
     observer.observe(document.body, {
       childList: true,
@@ -2872,18 +3911,18 @@ function TableCopyLayer({
     });
 
     scheduleUpdate();
-    const interval = window.setInterval(scheduleUpdate, 1800);
     window.addEventListener("scroll", scheduleUpdate, true);
     window.addEventListener("resize", scheduleUpdate);
+    document.addEventListener("pointerover", handlePointerOver, true);
 
     return () => {
       if (frame) {
         window.cancelAnimationFrame(frame);
       }
       observer.disconnect();
-      window.clearInterval(interval);
       window.removeEventListener("scroll", scheduleUpdate, true);
       window.removeEventListener("resize", scheduleUpdate);
+      document.removeEventListener("pointerover", handlePointerOver, true);
     };
   }, [updateOverlays]);
 
@@ -3060,7 +4099,7 @@ function TableCopyLayer({
       }
       copiedTimerRef.current = window.setTimeout(() => setCopied(null), 1400);
     } catch (error) {
-      console.warn("[GPT聊天导航器] 复制表格失败：", error);
+      console.warn("[GPT页面增强工具] 复制表格失败：", error);
     }
   };
 
@@ -3081,7 +4120,7 @@ function TableCopyLayer({
       }
       copiedTimerRef.current = window.setTimeout(() => setCopied(null), 1400);
     } catch (error) {
-      console.warn("[GPT聊天导航器] 复制表格区域失败：", error);
+      console.warn("[GPT页面增强工具] 复制表格区域失败：", error);
     }
   };
 
@@ -3107,6 +4146,8 @@ function TableCopyLayer({
     }
 
     jumpToElement(nextOverlay.table, true);
+    activeTableRef.current = nextOverlay.table;
+    setActiveTableId(nextOverlay.id);
     setMenuId(nextOverlay.id);
   };
 
@@ -3114,26 +4155,32 @@ function TableCopyLayer({
     return null;
   }
 
+  const visibleTableId = menuId || selectionModeTableId || activeSelection?.tableId || copied?.id || activeTableId;
+  const overlay = visibleTableId ? overlays.find((candidate) => candidate.id === visibleTableId) : null;
+
+  if (!overlay) {
+    return null;
+  }
+
+  const isCopied = copied?.id === overlay.id;
+  const activeFormat = isCopied ? copied.format : preferredFormat;
+  const title = `${isCopied ? labels.copied : labels.copy} · ${labels.formats[activeFormat]}`;
+  const rowMatrix = getHoveredMatrix(overlay.table, hoveredCell, "row");
+  const columnMatrix = getHoveredMatrix(overlay.table, hoveredCell, "column");
+  const selectionMatrix = getSelectionMatrix(overlay.table, activeSelection);
+  const activeOverlayIndex = overlays.findIndex((candidate) => candidate.id === overlay.id);
+  const canJumpPrevious = activeOverlayIndex > 0;
+  const canJumpNext = activeOverlayIndex >= 0 && activeOverlayIndex < overlays.length - 1;
+
   return (
     <div className="cnav-table-copy-layer" data-theme={theme}>
-      {overlays.map((overlay) => {
-        const isCopied = copied?.id === overlay.id;
-        const activeFormat = isCopied ? copied.format : preferredFormat;
-        const title = `${isCopied ? labels.copied : labels.copy} · ${labels.formats[activeFormat]}`;
-        const rowMatrix = getHoveredMatrix(overlay.table, hoveredCell, "row");
-        const columnMatrix = getHoveredMatrix(overlay.table, hoveredCell, "column");
-        const selectionMatrix = getSelectionMatrix(overlay.table, activeSelection);
-        const canJumpPrevious = overlays.findIndex((candidate) => candidate.id === overlay.id) > 0;
-        const canJumpNext = overlays.findIndex((candidate) => candidate.id === overlay.id) < overlays.length - 1;
-
-        return (
-          <div
-            className={`cnav-table-copy-toolbar is-menu-${overlay.menuAlign}${menuId === overlay.id ? " is-open" : ""}${isCopied ? " is-copied" : ""}`}
-            key={overlay.id}
-            style={{ left: overlay.left, top: overlay.top }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-          >
+      <div
+        className={`cnav-table-copy-toolbar is-menu-${overlay.menuAlign}${menuId === overlay.id ? " is-open" : ""}${isCopied ? " is-copied" : ""}`}
+        key={overlay.id}
+        style={{ left: overlay.left, top: overlay.top }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
             <button
               className="cnav-table-copy-button"
               type="button"
@@ -3249,9 +4296,7 @@ function TableCopyLayer({
                 ))}
               </div>
             ) : null}
-          </div>
-        );
-      })}
+      </div>
     </div>
   );
 }
@@ -3276,8 +4321,19 @@ interface CodeBlockLabels {
   copied: string;
 }
 
-const CODE_BLOCK_TOOLBAR_WIDTH = 156;
-const CODE_BLOCK_TOOLBAR_HEIGHT = 32;
+interface CodeBlockPointerSnapshot {
+  x: number;
+  y: number;
+  time: number;
+}
+
+const CODE_BLOCK_TOOLBAR_WIDTH = 42;
+const CODE_BLOCK_TOOLBAR_HEIGHT = 136;
+const CODE_BLOCK_OUTSIDE_GAP = 48;
+const CODE_BLOCK_POINTER_TTL_MS = 12000;
+const CODE_BLOCK_POINTER_RIGHT_EXTENSION = CODE_BLOCK_OUTSIDE_GAP + CODE_BLOCK_TOOLBAR_WIDTH + 96;
+const CODE_BLOCK_POINTER_LEFT_TOLERANCE = 14;
+const CODE_BLOCK_POINTER_VERTICAL_TOLERANCE = 28;
 const codeBlockIdRegistry = new WeakMap<HTMLPreElement, string>();
 let nextCodeBlockIndex = 1;
 
@@ -3346,9 +4402,11 @@ function isCopyableCodeBlock(pre: HTMLPreElement): boolean {
 }
 
 function findCopyableCodeBlocks(): HTMLPreElement[] {
-  return safeQueryAll("main pre")
+  const candidates = safeQueryAll("main pre")
     .filter((element): element is HTMLPreElement => element instanceof HTMLPreElement)
     .filter(isCopyableCodeBlock);
+
+  return dedupeCopyableCodeBlocks(candidates);
 }
 
 function extractCodeBlockText(pre: HTMLPreElement): string {
@@ -3433,6 +4491,151 @@ function detectCodeFilename(pre: HTMLPreElement, index: number, language: string
   return filenameMatch?.[0] || `snippet-${index}.${extension}`;
 }
 
+function getCodeBlockTextSignature(pre: HTMLPreElement): string {
+  return stableHash(extractCodeBlockText(pre));
+}
+
+function areDuplicateCopyableCodeBlocks(first: HTMLPreElement, second: HTMLPreElement): boolean {
+  const firstRect = first.getBoundingClientRect();
+  const secondRect = second.getBoundingClientRect();
+
+  return areTableRectsVisuallySame(firstRect, secondRect) &&
+    getCodeBlockTextSignature(first) === getCodeBlockTextSignature(second);
+}
+
+function pickPreferredCopyableCodeBlock(first: HTMLPreElement, second: HTMLPreElement): HTMLPreElement {
+  if (first.contains(second)) {
+    return second;
+  }
+
+  if (second.contains(first)) {
+    return first;
+  }
+
+  const firstTextLength = extractCodeBlockText(first).length;
+  const secondTextLength = extractCodeBlockText(second).length;
+  return secondTextLength > firstTextLength ? second : first;
+}
+
+function dedupeCopyableCodeBlocks(blocks: HTMLPreElement[]): HTMLPreElement[] {
+  const unique: HTMLPreElement[] = [];
+
+  for (const block of blocks) {
+    const existingIndex = unique.findIndex((candidate) => areDuplicateCopyableCodeBlocks(candidate, block));
+    if (existingIndex < 0) {
+      unique.push(block);
+      continue;
+    }
+
+    unique[existingIndex] = pickPreferredCopyableCodeBlock(unique[existingIndex], block);
+  }
+
+  return unique;
+}
+
+function getCopyableCodeBlockFromTarget(target: EventTarget | null): HTMLPreElement | null {
+  if (!(target instanceof Element) || target.closest(`#${ROOT_ID}`)) {
+    return null;
+  }
+
+  const pre = target.closest("pre");
+  return pre instanceof HTMLPreElement && isCopyableCodeBlock(pre) ? pre : null;
+}
+
+function getCodeBlockViewportScore(pre: HTMLPreElement): number {
+  const rect = pre.getBoundingClientRect();
+  const visibleTop = Math.max(rect.top, 76);
+  const visibleBottom = Math.min(rect.bottom, window.innerHeight - 72);
+
+  if (visibleBottom <= visibleTop) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const visibleCenter = (visibleTop + visibleBottom) / 2;
+  const targetCenter = window.innerHeight * 0.48;
+  return Math.abs(visibleCenter - targetCenter);
+}
+
+function getCodeBlockPointerScore(pre: HTMLPreElement, pointer: CodeBlockPointerSnapshot): number {
+  const rect = pre.getBoundingClientRect();
+  const left = rect.left - CODE_BLOCK_POINTER_LEFT_TOLERANCE;
+  const right = rect.right + CODE_BLOCK_POINTER_RIGHT_EXTENSION;
+  const top = rect.top - CODE_BLOCK_POINTER_VERTICAL_TOLERANCE;
+  const bottom = rect.bottom + CODE_BLOCK_POINTER_VERTICAL_TOLERANCE;
+
+  if (pointer.x < left || pointer.x > right || pointer.y < top || pointer.y > bottom) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const horizontalDistance = pointer.x < rect.left
+    ? rect.left - pointer.x
+    : pointer.x > rect.right
+      ? pointer.x - rect.right
+      : 0;
+  const verticalDistance = pointer.y < rect.top
+    ? rect.top - pointer.y
+    : pointer.y > rect.bottom
+      ? pointer.y - rect.bottom
+      : 0;
+  const centerDistance = Math.abs(pointer.y - (rect.top + rect.bottom) / 2);
+
+  return verticalDistance * 6 + horizontalDistance * 0.45 + centerDistance * 0.05;
+}
+
+function getFreshCodeBlockPointer(pointer: CodeBlockPointerSnapshot | null): CodeBlockPointerSnapshot | null {
+  if (!pointer || Date.now() - pointer.time > CODE_BLOCK_POINTER_TTL_MS) {
+    return null;
+  }
+
+  return pointer;
+}
+
+function pickCopyableCodeBlockNearPointer(
+  blocks: HTMLPreElement[],
+  pointer: CodeBlockPointerSnapshot
+): HTMLPreElement | null {
+  let bestBlock: HTMLPreElement | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const block of blocks) {
+    const score = getCodeBlockPointerScore(block, pointer);
+    if (score < bestScore) {
+      bestScore = score;
+      bestBlock = block;
+    }
+  }
+
+  return Number.isFinite(bestScore) ? bestBlock : null;
+}
+
+function pickActiveCopyableCodeBlock(
+  blocks: HTMLPreElement[],
+  preferredPre: HTMLPreElement | null,
+  pointer: CodeBlockPointerSnapshot | null
+): HTMLPreElement | null {
+  if (preferredPre && blocks.includes(preferredPre)) {
+    return preferredPre;
+  }
+
+  const freshPointer = getFreshCodeBlockPointer(pointer);
+  if (freshPointer) {
+    return pickCopyableCodeBlockNearPointer(blocks, freshPointer);
+  }
+
+  let bestBlock: HTMLPreElement | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const block of blocks) {
+    const score = getCodeBlockViewportScore(block);
+    if (score < bestScore) {
+      bestScore = score;
+      bestBlock = block;
+    }
+  }
+
+  return bestBlock;
+}
+
 function isDiffCodeBlock(language: string, text: string): boolean {
   if (/^(diff|patch)$/i.test(language)) {
     return true;
@@ -3496,14 +4699,27 @@ function getCodeBlockOverlay(
   const language = detectCodeLanguage(pre);
   const id = getCodeBlockId(pre);
   const top = Math.round(Math.min(Math.max(visibleTop + 6, 76), visibleBottom - CODE_BLOCK_TOOLBAR_HEIGHT));
-  const left = shiftLeftAwayFromRects(
-    Math.round(visibleRight - CODE_BLOCK_TOOLBAR_WIDTH),
+  const preferredOutsideLeft = Math.round(rect.right + CODE_BLOCK_OUTSIDE_GAP);
+  const outsideLeft = preferredOutsideLeft + CODE_BLOCK_TOOLBAR_WIDTH <= viewportWidth - 8
+    ? preferredOutsideLeft
+    : Math.round(visibleRight + CODE_BLOCK_OUTSIDE_GAP);
+  const outsideFits = canPlaceFloatingControl(
+    outsideLeft,
     top,
     CODE_BLOCK_TOOLBAR_WIDTH,
     CODE_BLOCK_TOOLBAR_HEIGHT,
-    Math.round(visibleLeft),
     avoidRects
   );
+  const left = outsideFits
+    ? outsideLeft
+    : shiftLeftAwayFromRects(
+      Math.round(visibleRight - CODE_BLOCK_TOOLBAR_WIDTH),
+      top,
+      CODE_BLOCK_TOOLBAR_WIDTH,
+      CODE_BLOCK_TOOLBAR_HEIGHT,
+      Math.round(visibleLeft),
+      avoidRects
+    );
 
   decorateDiffCodeBlock(pre, language, text);
 
@@ -3519,22 +4735,18 @@ function getCodeBlockOverlay(
   };
 }
 
-function areCodeOverlaysEqual(first: CodeBlockOverlay[], second: CodeBlockOverlay[]): boolean {
-  if (first.length !== second.length) {
-    return false;
+function areCodeOverlaysEqual(first: CodeBlockOverlay | null, second: CodeBlockOverlay | null): boolean {
+  if (!first || !second) {
+    return first === second;
   }
 
-  return first.every((overlay, index) => {
-    const candidate = second[index];
-    return Boolean(candidate) &&
-      overlay.id === candidate.id &&
-      overlay.pre === candidate.pre &&
-      overlay.top === candidate.top &&
-      overlay.left === candidate.left &&
-      overlay.filename === candidate.filename &&
-      overlay.lineCount === candidate.lineCount &&
-      overlay.isDiff === candidate.isDiff;
-  });
+  return first.id === second.id &&
+    first.pre === second.pre &&
+    first.top === second.top &&
+    first.left === second.left &&
+    first.filename === second.filename &&
+    first.lineCount === second.lineCount &&
+    first.isDiff === second.isDiff;
 }
 
 function downloadCodeFile(filename: string, text: string) {
@@ -3559,19 +4771,45 @@ function CodeBlockLayer({
   navigatorCollapsed: boolean;
 }) {
   const labels = useMemo(() => getCodeBlockLabels(language), [language]);
-  const [overlays, setOverlays] = useState<CodeBlockOverlay[]>([]);
+  const [overlay, setOverlay] = useState<CodeBlockOverlay | null>(null);
   const [collapsedBlocks, setCollapsedBlocks] = useState<Record<string, true>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const activePreRef = useRef<HTMLPreElement | null>(null);
+  const pointerSnapshotRef = useRef<CodeBlockPointerSnapshot | null>(null);
+  const visibleCodeBlocksRef = useRef<Set<HTMLPreElement>>(new Set());
   const copiedTimerRef = useRef<number | undefined>(undefined);
 
   const updateOverlays = useCallback(() => {
     const avoidRects = getFloatingAvoidRects(navigatorCollapsed);
-    const nextOverlays = findCopyableCodeBlocks()
-      .map((pre, index) => getCodeBlockOverlay(pre, avoidRects, index + 1))
-      .filter((overlay): overlay is CodeBlockOverlay => Boolean(overlay));
+    const blocks = findCopyableCodeBlocks();
+    const nextVisibleBlocks = new Set(blocks);
 
-    setOverlays((current) => (areCodeOverlaysEqual(current, nextOverlays) ? current : nextOverlays));
-  }, [navigatorCollapsed]);
+    for (const pre of visibleCodeBlocksRef.current) {
+      if (!nextVisibleBlocks.has(pre)) {
+        pre.removeAttribute("data-cnav-code-collapsed");
+        pre.removeAttribute("data-cnav-code-long");
+      }
+    }
+
+    visibleCodeBlocksRef.current = nextVisibleBlocks;
+
+    for (const pre of blocks) {
+      const text = extractCodeBlockText(pre);
+      const language = detectCodeLanguage(pre);
+      const id = getCodeBlockId(pre);
+      decorateDiffCodeBlock(pre, language, text);
+      pre.toggleAttribute("data-cnav-code-collapsed", Boolean(collapsedBlocks[id]));
+      pre.toggleAttribute("data-cnav-code-long", text.split("\n").length > 40);
+    }
+
+    const activePre = pickActiveCopyableCodeBlock(blocks, activePreRef.current, pointerSnapshotRef.current);
+    const activeIndex = activePre ? blocks.indexOf(activePre) + 1 : -1;
+    const nextOverlay = activePre && activeIndex > 0
+      ? getCodeBlockOverlay(activePre, avoidRects, activeIndex)
+      : null;
+
+    setOverlay((current) => (areCodeOverlaysEqual(current, nextOverlay) ? current : nextOverlay));
+  }, [collapsedBlocks, navigatorCollapsed]);
 
   useEffect(() => {
     let frame = 0;
@@ -3586,6 +4824,78 @@ function CodeBlockLayer({
       });
     };
 
+    const rememberPointer = (event: PointerEvent, force = false) => {
+      if (event.target instanceof Element && event.target.closest(`#${ROOT_ID}`)) {
+        return false;
+      }
+
+      const current = pointerSnapshotRef.current;
+      pointerSnapshotRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        time: Date.now()
+      };
+
+      if (force || !current) {
+        return true;
+      }
+
+      return Math.abs(current.x - event.clientX) > 6 || Math.abs(current.y - event.clientY) > 6;
+    };
+
+    const updateActivePreFromTarget = (target: EventTarget | null) => {
+      const pre = getCopyableCodeBlockFromTarget(target);
+      if (pre) {
+        if (activePreRef.current === pre) {
+          return false;
+        }
+
+        activePreRef.current = pre;
+        return true;
+      }
+
+      if (target instanceof Element && target.closest(`#${ROOT_ID}`)) {
+        return false;
+      }
+
+      if (!activePreRef.current) {
+        return false;
+      }
+
+      activePreRef.current = null;
+      return true;
+    };
+
+    const handlePointerOver = (event: PointerEvent) => {
+      const pointerChanged = rememberPointer(event, true);
+      const activeChanged = updateActivePreFromTarget(event.target);
+      if (pointerChanged || activeChanged) {
+        scheduleUpdate();
+      }
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const pre = getCopyableCodeBlockFromTarget(event.target);
+      if (pre && activePreRef.current !== pre) {
+        activePreRef.current = pre;
+        scheduleUpdate();
+      }
+    };
+
+    const handleFocusOut = (event: FocusEvent) => {
+      const pre = getCopyableCodeBlockFromTarget(event.target);
+      if (!pre || activePreRef.current !== pre) {
+        return;
+      }
+
+      if (event.relatedTarget instanceof Element && pre.contains(event.relatedTarget)) {
+        return;
+      }
+
+      activePreRef.current = null;
+      scheduleUpdate();
+    };
+
     const observer = new MutationObserver(scheduleUpdate);
     observer.observe(document.body, {
       childList: true,
@@ -3594,39 +4904,36 @@ function CodeBlockLayer({
     });
 
     scheduleUpdate();
-    const interval = window.setInterval(scheduleUpdate, 1800);
     window.addEventListener("scroll", scheduleUpdate, true);
     window.addEventListener("resize", scheduleUpdate);
+    document.addEventListener("pointerover", handlePointerOver, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("focusout", handleFocusOut, true);
 
     return () => {
       if (frame) {
         window.cancelAnimationFrame(frame);
       }
       observer.disconnect();
-      window.clearInterval(interval);
       window.removeEventListener("scroll", scheduleUpdate, true);
       window.removeEventListener("resize", scheduleUpdate);
+      document.removeEventListener("pointerover", handlePointerOver, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("focusout", handleFocusOut, true);
     };
   }, [updateOverlays]);
-
-  useEffect(() => {
-    for (const overlay of overlays) {
-      overlay.pre.toggleAttribute("data-cnav-code-collapsed", Boolean(collapsedBlocks[overlay.id]));
-      overlay.pre.toggleAttribute("data-cnav-code-long", overlay.lineCount > 40);
-    }
-  }, [collapsedBlocks, overlays]);
 
   useEffect(() => {
     return () => {
       if (copiedTimerRef.current) {
         window.clearTimeout(copiedTimerRef.current);
       }
-      for (const overlay of overlays) {
-        overlay.pre.removeAttribute("data-cnav-code-collapsed");
-        overlay.pre.removeAttribute("data-cnav-code-long");
+      for (const pre of visibleCodeBlocksRef.current) {
+        pre.removeAttribute("data-cnav-code-collapsed");
+        pre.removeAttribute("data-cnav-code-long");
       }
     };
-  }, [overlays]);
+  }, []);
 
   const showCopied = (id: string) => {
     setCopiedId(id);
@@ -3648,69 +4955,66 @@ function CodeBlockLayer({
     showCopied(overlay.id);
   };
 
-  if (overlays.length === 0) {
+  if (!overlay) {
     return null;
   }
 
+  const isCollapsed = Boolean(collapsedBlocks[overlay.id]);
+  const isCopied = copiedId === overlay.id;
+
   return (
     <div className="cnav-code-layer" data-theme={theme}>
-      {overlays.map((overlay) => {
-        const isCollapsed = Boolean(collapsedBlocks[overlay.id]);
-        const isCopied = copiedId === overlay.id;
-        return (
-          <div
-            className={`cnav-code-toolbar${isCopied ? " is-copied" : ""}${overlay.lineCount > 40 ? " is-long" : ""}`}
-            key={overlay.id}
-            style={{ left: overlay.left, top: overlay.top }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              title={labels.copyName}
-              aria-label={labels.copyName}
-              onClick={() => void copyFilename(overlay)}
-            >
-              <FileText size={13} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              title={labels.copyMarkdown}
-              aria-label={labels.copyMarkdown}
-              onClick={() => void copyMarkdown(overlay)}
-            >
-              {isCopied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-            </button>
-            <button
-              type="button"
-              title={labels.download}
-              aria-label={labels.download}
-              onClick={() => downloadCodeFile(overlay.filename, extractCodeBlockText(overlay.pre))}
-            >
-              <ArrowDownToLine size={13} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              title={isCollapsed ? labels.expand : labels.collapse}
-              aria-label={isCollapsed ? labels.expand : labels.collapse}
-              onClick={() =>
-                setCollapsedBlocks((current) => {
-                  const next = { ...current };
-                  if (next[overlay.id]) {
-                    delete next[overlay.id];
-                  } else {
-                    next[overlay.id] = true;
-                  }
-                  return next;
-                })
+      <div
+        className={`cnav-code-toolbar${isCopied ? " is-copied" : ""}${overlay.lineCount > 40 ? " is-long" : ""}`}
+        key={overlay.id}
+        style={{ left: overlay.left, top: overlay.top }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          title={labels.copyName}
+          aria-label={labels.copyName}
+          onClick={() => void copyFilename(overlay)}
+        >
+          <FileText size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title={labels.copyMarkdown}
+          aria-label={labels.copyMarkdown}
+          onClick={() => void copyMarkdown(overlay)}
+        >
+          {isCopied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          title={labels.download}
+          aria-label={labels.download}
+          onClick={() => downloadCodeFile(overlay.filename, extractCodeBlockText(overlay.pre))}
+        >
+          <ArrowDownToLine size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title={isCollapsed ? labels.expand : labels.collapse}
+          aria-label={isCollapsed ? labels.expand : labels.collapse}
+          onClick={() =>
+            setCollapsedBlocks((current) => {
+              const next = { ...current };
+              if (next[overlay.id]) {
+                delete next[overlay.id];
+              } else {
+                next[overlay.id] = true;
               }
-            >
-              <Minimize2 size={13} aria-hidden="true" />
-            </button>
-            {isCopied ? <span>{labels.copied}</span> : null}
-          </div>
-        );
-      })}
+              return next;
+            })
+          }
+        >
+          <Minimize2 size={13} aria-hidden="true" />
+        </button>
+        {isCopied ? <span>{labels.copied}</span> : null}
+      </div>
     </div>
   );
 }
@@ -4001,28 +5305,33 @@ function fetchTextFromBackground(url: string, timeoutMs: number): Promise<string
     }
 
     const timer = window.setTimeout(() => reject(new Error("Background fetch timed out")), timeoutMs + 1000);
-    chrome.runtime.sendMessage(
-      {
-        type: "conversationNavigator:fetchText",
-        url,
-        timeoutMs
-      },
-      (response?: { ok?: boolean; text?: string; error?: string }) => {
-        window.clearTimeout(timer);
-        const runtimeError = chrome.runtime.lastError;
-        if (runtimeError?.message) {
-          reject(new Error(runtimeError.message));
-          return;
-        }
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "conversationNavigator:fetchText",
+          url,
+          timeoutMs
+        },
+        (response?: { ok?: boolean; text?: string; error?: string }) => {
+          window.clearTimeout(timer);
+          const runtimeErrorMessage = getRuntimeLastErrorMessage();
+          if (runtimeErrorMessage) {
+            reject(new Error(runtimeErrorMessage));
+            return;
+          }
 
-        if (response?.ok && typeof response.text === "string") {
-          resolve(response.text);
-          return;
-        }
+          if (response?.ok && typeof response.text === "string") {
+            resolve(response.text);
+            return;
+          }
 
-        reject(new Error(response?.error || "Background fetch failed"));
-      }
-    );
+          reject(new Error(response?.error || "Background fetch failed"));
+        }
+      );
+    } catch (error) {
+      window.clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -4064,17 +5373,6 @@ async function fetchTextWithTimeout(url: string, timeoutMs = 8000): Promise<stri
   } finally {
     window.clearTimeout(timer);
   }
-}
-
-async function fetchRemoteCompatRules(): Promise<ChatGptDomRule[]> {
-  const text = await fetchTextWithTimeout(CHATGPT_COMPAT_RULES_URL, 8000);
-  const parsed = JSON.parse(text) as unknown;
-  const rules = normalizeCompatRulesPayload(parsed);
-  if (rules.length === 0) {
-    throw new Error("Remote compatibility rules are empty or invalid");
-  }
-
-  return rules;
 }
 
 function getModelVersion(model: ModelBudgetEntry): { major: number; minor: number } | null {
@@ -4317,18 +5615,22 @@ function buildTokenDetailEntries(entries: MessageMapEntry[], items: NavigatorIte
 function createViewportMetrics(entries: MessageMapEntry[]): ViewportMetrics {
   const visibleIds = new Set<string>();
   let tokenCount = 0;
-  const viewportHeight = Math.max(1, window.innerHeight);
-  const documentHeight = Math.max(
-    viewportHeight,
-    document.documentElement.scrollHeight,
-    document.body.scrollHeight
-  );
-  const scrollableHeight = Math.max(1, documentHeight - viewportHeight);
+  const primaryScrollContainer = getPrimaryConversationScrollContainer();
+  const primaryViewport = getContainerViewportRect(primaryScrollContainer);
+  const viewportHeight = Math.max(1, primaryViewport.height);
+  const documentHeight = Math.max(viewportHeight, getContainerScrollHeight(primaryScrollContainer));
+  const scrollableHeight = Math.max(1, documentHeight - getContainerClientHeight(primaryScrollContainer));
 
   for (const entry of entries) {
     const element = anchorRegistry.get(entry.id);
+    if (!element) {
+      continue;
+    }
+
+    const scrollContainer = getScrollContainer(element);
+    const viewport = getContainerViewportRect(scrollContainer);
     const rect = element?.getBoundingClientRect();
-    if (!rect || rect.bottom < 0 || rect.top > viewportHeight) {
+    if (!rect || rect.bottom < viewport.top || rect.top > viewport.bottom) {
       continue;
     }
 
@@ -4339,7 +5641,7 @@ function createViewportMetrics(entries: MessageMapEntry[]): ViewportMetrics {
   return {
     tokenCount,
     visibleIds,
-    topRatio: Math.min(1, Math.max(0, window.scrollY / scrollableHeight)),
+    topRatio: Math.min(1, Math.max(0, getContainerScrollTop(primaryScrollContainer) / scrollableHeight)),
     heightRatio: Math.min(1, Math.max(0.05, viewportHeight / documentHeight))
   };
 }
@@ -4352,22 +5654,21 @@ function ConversationNavigator() {
   const adapter = getAdapter();
   const [settings, setSettings] = useState<NavigatorSettings>(DEFAULT_SETTINGS);
   const t = getTranslation(settings.language);
-  const [pageId, setPageId] = useState(getPageId);
-  const pageKey = useMemo(() => getPageStorageKey(settings, pageId), [pageId, settings]);
-  const [isOpening, setIsOpening] = useState(false);
+  const [pageId, setPageId] = useState(() => {
+    const initialSessionId = createConversationSessionId(0);
+    activeTokenSessionId = initialSessionId;
+    return initialSessionId;
+  });
+  const pageKey = pageId;
   const [items, setItems] = useState<NavigatorItem[]>([]);
   const [mapEntries, setMapEntries] = useState<MessageMapEntry[]>([]);
-  const [query, setQuery] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [favorites, setFavorites] = useState<Record<string, true>>({});
-  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, true>>({});
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
-  const [editingNote, setEditingNote] = useState("");
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ColorTheme>(detectPageTheme);
   const [resizeFrame, setResizeFrame] = useState<ResizeFrame | null>(null);
   const [resizingSide, setResizingSide] = useState<"left" | "right" | null>(null);
+  const [resizePreviewValue, setResizePreviewValue] = useState<number | null>(null);
+  const [canvasResizeFrame, setCanvasResizeFrame] = useState<ResizeFrame | null>(null);
+  const [canvasResizingSide, setCanvasResizingSide] = useState<"left" | "right" | null>(null);
+  const [canvasResizePreviewValue, setCanvasResizePreviewValue] = useState<number | null>(null);
   const [scrollJumpPosition, setScrollJumpPosition] = useState<FloatingControlPosition>(() =>
     getDefaultScrollJumpPosition()
   );
@@ -4380,62 +5681,100 @@ function ConversationNavigator() {
   const [tokenHudDraft, setTokenHudDraft] = useState<{ x: number; y: number } | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
   const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
-  const [modelSyncStatus, setModelSyncStatus] = useState<ModelSyncStatus>("idle");
-  const [adapterHealth, setAdapterHealth] = useState<AdapterHealth>(() => createDefaultAdapterHealth());
   const [detectedModelLabel, setDetectedModelLabel] = useState("");
-  const [compatRulesSyncStatus, setCompatRulesSyncStatus] = useState<CompatRulesSyncStatus>("idle");
   const [compatRuleCount, setCompatRuleCount] = useState(0);
-  const favoritesRef = useRef(favorites);
-  const groupCollapsedRef = useRef(groupCollapsed);
+  const [officialPopoverOpen, setOfficialPopoverOpen] = useState(false);
   const itemsRef = useRef(items);
   const mapEntriesRef = useRef(mapEntries);
-  const pageKeyRef = useRef(pageKey);
+  const sessionGenerationRef = useRef(0);
+  const sessionIdRef = useRef(pageId);
   const settingsRef = useRef(settings);
   const modelCatalogRef = useRef(modelCatalog);
   const resizeFrameRef = useRef(resizeFrame);
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const revealLatestOnNextPaintRef = useRef(true);
-  const openingTimerRef = useRef<number | undefined>(undefined);
-  const settingsSaveTimerRef = useRef<number | undefined>(undefined);
-  const settingsPreviewFrameRef = useRef<number | undefined>(undefined);
-  const pendingPreviewSettingsRef = useRef<NavigatorSettings | null>(null);
-  const lastRecordSignatureRef = useRef("");
+  const canvasResizeFrameRef = useRef(canvasResizeFrame);
+  const canvasResizeTargetRef = useRef<CanvasWidthTarget | null>(null);
   const scanTimerRef = useRef<number | undefined>(undefined);
   const scanIdleWorkRef = useRef<ScheduledIdleWork | null>(null);
   const scanRunningRef = useRef(false);
   const scanQueuedRef = useRef(false);
-  const lastScanScrollYRef = useRef(window.scrollY);
+  const lastScanScrollYRef = useRef(getCurrentConversationScrollTop());
   const forceDomRebuildOnNextScanRef = useRef(true);
 
-  favoritesRef.current = favorites;
-  groupCollapsedRef.current = groupCollapsed;
   itemsRef.current = items;
   mapEntriesRef.current = mapEntries;
-  pageKeyRef.current = pageKey;
+  sessionIdRef.current = pageId;
+  activeTokenSessionId = pageId;
   settingsRef.current = settings;
   modelCatalogRef.current = modelCatalog;
   resizeFrameRef.current = resizeFrame;
+  canvasResizeFrameRef.current = canvasResizeFrame;
+  latestNavigatorExportState = {
+    items,
+    pageKey,
+    language: settings.language
+  };
 
-  const scan = useCallback(async () => {
+  const resetConversationState = useCallback(() => {
+    sessionGenerationRef.current += 1;
+    const nextSessionId = createConversationSessionId(sessionGenerationRef.current);
+    sessionIdRef.current = nextSessionId;
+    activeTokenSessionId = nextSessionId;
+    latestPageHealth = null;
+    latestNavigatorExportState = {
+      items: [],
+      pageKey: nextSessionId,
+      language: settingsRef.current.language
+    };
+
+    if (scanTimerRef.current) {
+      window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = undefined;
+    }
+    cancelIdleWork(scanIdleWorkRef.current);
+    scanIdleWorkRef.current = null;
+    scanQueuedRef.current = false;
+    forceDomRebuildOnNextScanRef.current = true;
+    lastScanScrollYRef.current = getCurrentConversationScrollTop();
+    itemsRef.current = [];
+    mapEntriesRef.current = [];
+    anchorRegistry.clear();
+    setItems([]);
+    setMapEntries([]);
+    setViewportMetrics({
+      tokenCount: 0,
+      visibleIds: new Set<string>(),
+      topRatio: 0,
+      heightRatio: 0
+    });
+    setDetectedModelLabel("");
+    setPageId(nextSessionId);
+  }, []);
+
+  const scan = useCallback(() => {
     if (scanRunningRef.current) {
       scanQueuedRef.current = true;
       return;
     }
 
+    const scanSessionId = sessionIdRef.current;
     scanRunningRef.current = true;
     try {
       const modelLabel = detectModelLabel();
       const { budget } = getTokenBudget(settingsRef.current, modelLabel, modelCatalogRef.current);
-      const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData(
-        favoritesRef.current,
-        budget
-      );
+      const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData(budget);
+      if (scanSessionId !== sessionIdRef.current) {
+        return;
+      }
+
+      if (nextMapEntries.length === 0 && mapEntriesRef.current.length > 0) {
+        resetConversationState();
+        return;
+      }
+
       const shouldRebuildFromDom = forceDomRebuildOnNextScanRef.current || itemsRef.current.length === 0;
       const merged = shouldRebuildFromDom
         ? {
-            items: normalizeNavigatorOrder(
-              nextItems.map((item) => applyFavorite({ ...item, mounted: true }, favoritesRef.current))
-            ),
+            items: normalizeNavigatorOrder(nextItems.map((item) => ({ ...item, mounted: true }))),
             mapEntries: normalizeMapEntryOrder(nextMapEntries.map((entry) => ({ ...entry, mounted: true })))
           }
         : mergeNavigatorData(
@@ -4443,36 +5782,22 @@ function ConversationNavigator() {
             mapEntriesRef.current,
             nextItems,
             nextMapEntries,
-            favoritesRef.current,
             lastScanScrollYRef.current
           );
+      if (scanSessionId !== sessionIdRef.current) {
+        return;
+      }
+
       forceDomRebuildOnNextScanRef.current = false;
-      lastScanScrollYRef.current = window.scrollY;
+      lastScanScrollYRef.current = getCurrentConversationScrollTop();
       itemsRef.current = merged.items;
       mapEntriesRef.current = merged.mapEntries;
+      latestPageHealth = toPageAdapterHealth(nextHealth);
       setItems(merged.items);
       setMapEntries(merged.mapEntries);
-      setAdapterHealth(nextHealth);
       setDetectedModelLabel((current) => (current === modelLabel ? current : modelLabel));
-      const nextSignature = makeRecordSignature(merged.items, favoritesRef.current, groupCollapsedRef.current);
-      if (nextSignature !== lastRecordSignatureRef.current) {
-        lastRecordSignatureRef.current = nextSignature;
-        await persistRecord(
-          settingsRef.current,
-          pageKeyRef.current,
-          merged.items,
-          favoritesRef.current,
-          nextHealth,
-          groupCollapsedRef.current
-        );
-      }
     } catch (error) {
-      console.warn("[GPT聊天导航器] 扫描当前页面失败，保留上一轮数据：", error);
-      setAdapterHealth((current) => ({
-        ...current,
-        status: current.messageCount > 0 ? "degraded" : "unsupported",
-        reason: error instanceof Error ? error.message : "Scan failed before the page could be indexed."
-      }));
+      console.warn("[GPT页面增强工具] 扫描当前页面失败，保留上一轮数据：", error);
     } finally {
       scanRunningRef.current = false;
       if (scanQueuedRef.current) {
@@ -4480,7 +5805,7 @@ function ConversationNavigator() {
         window.setTimeout(() => {
           scanIdleWorkRef.current = requestIdleWork(() => {
             scanIdleWorkRef.current = null;
-            void scan();
+            scan();
           });
         }, SCAN_DEBOUNCE_MS);
       }
@@ -4498,21 +5823,14 @@ function ConversationNavigator() {
       scanTimerRef.current = undefined;
       scanIdleWorkRef.current = requestIdleWork(() => {
         scanIdleWorkRef.current = null;
-        void scan();
+        scan();
       });
     }, delay);
   }, [scan]);
 
   const applySettingsNow = (nextSettings: NavigatorSettings) => {
-    if (settingsPreviewFrameRef.current) {
-      window.cancelAnimationFrame(settingsPreviewFrameRef.current);
-      settingsPreviewFrameRef.current = undefined;
-    }
-
-    pendingPreviewSettingsRef.current = null;
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
-    applyChatTypography(nextSettings);
   };
 
   const applySettingsPatch = (patch: Partial<NavigatorSettings>) => {
@@ -4521,66 +5839,13 @@ function ConversationNavigator() {
     return nextSettings;
   };
 
-  const scheduleSettingsSave = (settingsToSave = settingsRef.current, delay = 450) => {
-    if (settingsSaveTimerRef.current) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-    }
-
-    settingsSaveTimerRef.current = window.setTimeout(() => {
-      settingsSaveTimerRef.current = undefined;
-      void saveSettings(settingsToSave);
-    }, delay);
-  };
-
-  const flushSettingsSave = () => {
-    if (settingsSaveTimerRef.current) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-      settingsSaveTimerRef.current = undefined;
-    }
-
-    void saveSettings(settingsRef.current);
-  };
-
-  const previewSettingsPatch = (patch: Partial<NavigatorSettings>) => {
-    const nextSettings = normalizeSettings({ ...settingsRef.current, ...patch });
-    settingsRef.current = nextSettings;
-    pendingPreviewSettingsRef.current = nextSettings;
-
-    if (!settingsPreviewFrameRef.current) {
-      settingsPreviewFrameRef.current = window.requestAnimationFrame(() => {
-        settingsPreviewFrameRef.current = undefined;
-        const pendingSettings = pendingPreviewSettingsRef.current;
-        pendingPreviewSettingsRef.current = null;
-        if (!pendingSettings) {
-          return;
-        }
-
-        setSettings(pendingSettings);
-        applyChatTypography(pendingSettings);
-      });
-    }
-
-    return nextSettings;
-  };
-
-  const previewDisplaySettings = (patch: Partial<NavigatorSettings>) => {
-    const nextSettings = previewSettingsPatch(patch);
-    scheduleSettingsSave(nextSettings);
-  };
-
   const commitSettingsPatch = async (patch: Partial<NavigatorSettings>) => {
-    if (settingsSaveTimerRef.current) {
-      window.clearTimeout(settingsSaveTimerRef.current);
-      settingsSaveTimerRef.current = undefined;
-    }
-
     const nextSettings = applySettingsPatch(patch);
     await saveSettings(nextSettings);
   };
   const updateSettings = commitSettingsPatch;
 
   const syncModelCatalog = useCallback(async (manual = false) => {
-    setModelSyncStatus("syncing");
     try {
       const models = await syncOpenAiModelCatalog();
       const updatedAt = Date.now();
@@ -4592,114 +5857,131 @@ function ConversationNavigator() {
           models
         } satisfies StoredModelCatalog
       });
-      setModelSyncStatus("synced");
     } catch (error) {
       if (manual) {
-        console.warn("[GPT聊天导航器] 同步 OpenAI 模型预算失败：", error);
+        console.warn("[GPT页面增强工具] 同步 OpenAI 模型预算失败：", error);
       }
       setModelCatalog(BUILT_IN_MODEL_BUDGETS);
-      setModelSyncStatus("failed");
     }
+  }, [resetConversationState]);
+
+  useEffect(() => {
+    let frame = 0;
+    const detectOfficialPopover = () => {
+      frame = 0;
+      const nextOpen = hasOpenOfficialPopover();
+      setOfficialPopoverOpen((current) => (current === nextOpen ? current : nextOpen));
+    };
+    const scheduleDetect = () => {
+      if (frame) {
+        return;
+      }
+
+      frame = window.requestAnimationFrame(detectOfficialPopover);
+    };
+
+    const observer = new MutationObserver(scheduleDetect);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        "aria-hidden",
+        "class",
+        "data-align",
+        "data-side",
+        "data-state",
+        "hidden",
+        "role",
+        "style"
+      ]
+    });
+
+    scheduleDetect();
+    document.addEventListener("click", scheduleDetect, true);
+    document.addEventListener("keydown", scheduleDetect, true);
+    document.addEventListener("pointerup", scheduleDetect, true);
+    window.addEventListener("resize", scheduleDetect);
+    window.addEventListener("scroll", scheduleDetect, true);
+
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      observer.disconnect();
+      document.removeEventListener("click", scheduleDetect, true);
+      document.removeEventListener("keydown", scheduleDetect, true);
+      document.removeEventListener("pointerup", scheduleDetect, true);
+      window.removeEventListener("resize", scheduleDetect);
+      window.removeEventListener("scroll", scheduleDetect, true);
+    };
   }, []);
 
-  const syncCompatRules = async () => {
-    setCompatRulesSyncStatus("syncing");
-    try {
-      const rules = await fetchRemoteCompatRules();
-      const updatedAt = Date.now();
-      setActiveCompatRules(rules, "remote");
-      setCompatRuleCount(rules.length);
-      await storageSet({
-        [COMPAT_RULES_STORAGE_KEY]: {
-          updatedAt,
-          rules
-        } satisfies StoredCompatRules
-      });
-      await updateSettings({
-        compatRulesRemoteEnabled: true,
-        compatRulesLastSyncAt: updatedAt,
-        compatRulesSource: "remote"
-      });
-      setCompatRulesSyncStatus("synced");
-      scheduleScan(100);
-    } catch (error) {
-      console.warn("[GPT聊天导航器] 同步 ChatGPT 兼容规则失败：", error);
-      setActiveCompatRules([], "built-in");
-      setCompatRuleCount(0);
-      await updateSettings({
-        compatRulesRemoteEnabled: false,
-        compatRulesSource: "built-in"
-      });
-      setCompatRulesSyncStatus("failed");
-      scheduleScan(100);
+  useEffect(() => {
+    const root = document.getElementById(ROOT_ID);
+    if (!root) {
+      return;
     }
-  };
 
-  const resetCompatRules = async () => {
-    setActiveCompatRules([], "built-in");
-    setCompatRuleCount(0);
-    setCompatRulesSyncStatus("idle");
-    await updateSettings({
-      compatRulesRemoteEnabled: false,
-      compatRulesLastSyncAt: 0,
-      compatRulesSource: "built-in"
-    });
-    await storageSet({
-      [COMPAT_RULES_STORAGE_KEY]: {
-        updatedAt: 0,
-        rules: []
-      } satisfies StoredCompatRules
-    });
-    scheduleScan(100);
-  };
+    if (officialPopoverOpen) {
+      root.setAttribute("data-cnav-official-popover-open", "true");
+    } else {
+      root.removeAttribute("data-cnav-official-popover-open");
+    }
+  }, [officialPopoverOpen]);
 
   useEffect(() => {
     installRouteEvents();
     let lastHref = location.href;
+    let routeCheckTimer = 0;
 
-    const updatePageKey = () => {
-      const nextPageId = getPageId();
-      revealLatestOnNextPaintRef.current = true;
-      forceDomRebuildOnNextScanRef.current = true;
-      itemsRef.current = [];
-      mapEntriesRef.current = [];
-      groupCollapsedRef.current = {};
-      pageKeyRef.current = getPageStorageKey(settingsRef.current, nextPageId);
-      lastRecordSignatureRef.current = "";
-      lastScanScrollYRef.current = window.scrollY;
-      anchorRegistry.clear();
-      setItems([]);
-      setMapEntries([]);
-      setGroupCollapsed({});
-      setEditingItemId(null);
-      setActiveId(null);
-      setAdapterHealth(createDefaultAdapterHealth());
-      setPageId(nextPageId);
-      window.setTimeout(() => setPageId(getPageId()), 50);
-    };
-
-    const checkRoute = () => {
-      if (location.href === lastHref) {
+    const handleRouteChange = () => {
+      const hrefChanged = location.href !== lastHref;
+      lastHref = location.href;
+      if (hrefChanged) {
+        resetConversationState();
+        scheduleScan(50);
         return;
       }
 
-      lastHref = location.href;
-      updatePageKey();
+      if (routeCheckTimer) {
+        window.clearTimeout(routeCheckTimer);
+      }
+      routeCheckTimer = window.setTimeout(() => {
+        routeCheckTimer = 0;
+        if (mapEntriesRef.current.length === 0) {
+          return;
+        }
+
+        const currentPromptPreviews = new Set(
+          getAdapter().collect().messages
+            .filter((message) => message.role === "user")
+            .map((message) => compactPreview(message.text, 112))
+        );
+        const hasPromptOverlap = hasConversationPromptOverlap(
+          itemsRef.current.map((item) => item.promptPreview),
+          currentPromptPreviews
+        );
+        if (!hasPromptOverlap) {
+          resetConversationState();
+          scheduleScan(50);
+        }
+      }, 80);
     };
 
-    const routeInterval = window.setInterval(checkRoute, 1000);
-
-    window.addEventListener("popstate", updatePageKey);
-    window.addEventListener("hashchange", updatePageKey);
-    window.addEventListener("conversation-navigator-route-change", updatePageKey);
+    window.addEventListener("popstate", handleRouteChange);
+    window.addEventListener("hashchange", handleRouteChange);
+    window.addEventListener("conversation-navigator-route-change", handleRouteChange);
 
     return () => {
-      window.clearInterval(routeInterval);
-      window.removeEventListener("popstate", updatePageKey);
-      window.removeEventListener("hashchange", updatePageKey);
-      window.removeEventListener("conversation-navigator-route-change", updatePageKey);
+      if (routeCheckTimer) {
+        window.clearTimeout(routeCheckTimer);
+      }
+      window.removeEventListener("popstate", handleRouteChange);
+      window.removeEventListener("hashchange", handleRouteChange);
+      window.removeEventListener("conversation-navigator-route-change", handleRouteChange);
     };
-  }, []);
+  }, [resetConversationState, scheduleScan]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4737,43 +6019,91 @@ function ConversationNavigator() {
 
   useEffect(() => {
     let cancelled = false;
+    let syncWork: ScheduledIdleWork | null = null;
 
     async function loadCompatRules() {
-      if (!settings.compatRulesRemoteEnabled || settings.compatRulesSource !== "remote") {
-        setActiveCompatRules([], "built-in");
-        setCompatRuleCount(0);
-        return;
-      }
-
       const stored = await storageGet<StoredCompatRules>(COMPAT_RULES_STORAGE_KEY);
       if (cancelled) {
         return;
       }
 
-      const rules = normalizeCompatRulesPayload({
+      const storedRules = normalizeCompatRulesPayload({
         schemaVersion: 1,
         rules: stored?.rules ?? []
       });
+      const remoteAllowed =
+        settings.compatRulesAutoSyncEnabled ||
+        (settings.compatRulesRemoteEnabled && settings.compatRulesSource === "remote");
 
-      if (rules.length === 0) {
+      if (!remoteAllowed || storedRules.length === 0) {
         setActiveCompatRules([], "built-in");
         setCompatRuleCount(0);
-        setCompatRulesSyncStatus("failed");
+      } else {
+        setActiveCompatRules(storedRules, "remote");
+        setCompatRuleCount(storedRules.length);
+        scheduleScan(100);
+      }
+
+      const stale = !stored?.updatedAt ||
+        Date.now() - stored.updatedAt >= COMPAT_RULES_SYNC_INTERVAL_MS;
+      if (!settings.compatRulesAutoSyncEnabled || !stale) {
         return;
       }
 
-      setActiveCompatRules(rules, "remote");
-      setCompatRuleCount(rules.length);
-      setCompatRulesSyncStatus("synced");
-      scheduleScan(100);
+      syncWork = requestIdleWork(() => {
+        void (async () => {
+          const attemptAt = Date.now();
+          try {
+            const text = await fetchTextFromBackground(CHATGPT_COMPAT_RULES_URL, 8000);
+            const parsed = JSON.parse(text) as unknown;
+            const rules = normalizeCompatRulesPayload(parsed);
+            if (rules.length === 0 || cancelled) {
+              throw new Error("Remote compatibility rules are empty");
+            }
+
+            await storageSet({
+              [COMPAT_RULES_STORAGE_KEY]: {
+                updatedAt: attemptAt,
+                lastAttemptAt: attemptAt,
+                rules
+              } satisfies StoredCompatRules,
+              [STORAGE_SETTINGS_KEY]: normalizeSettings({
+                ...settingsRef.current,
+                compatRulesRemoteEnabled: true,
+                compatRulesSource: "remote"
+              })
+            });
+            if (!cancelled) {
+              setActiveCompatRules(rules, "remote");
+              setCompatRuleCount(rules.length);
+              scheduleScan(50);
+            }
+          } catch (error) {
+            await storageSet({
+              [COMPAT_RULES_STORAGE_KEY]: {
+                updatedAt: stored?.updatedAt ?? 0,
+                lastAttemptAt: attemptAt,
+                lastError: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+                rules: stored?.rules ?? []
+              } satisfies StoredCompatRules
+            });
+          }
+        })();
+      }, 3000);
     }
 
     void loadCompatRules();
 
     return () => {
       cancelled = true;
+      cancelIdleWork(syncWork);
     };
-  }, [scheduleScan, settings.compatRulesRemoteEnabled, settings.compatRulesSource]);
+  }, [
+    scheduleScan,
+    settings.compatRulesAutoSyncEnabled,
+    settings.compatRulesRemoteEnabled,
+    settings.compatRulesSource
+  ]);
 
   useEffect(() => {
     const syncTheme = () => setTheme(detectPageTheme());
@@ -4804,11 +6134,18 @@ function ConversationNavigator() {
   useEffect(() => {
     let cancelled = false;
 
-    loadSettings().then((nextSettings) => {
-      if (!cancelled) {
-        applySettingsNow(nextSettings);
-      }
-    });
+    loadSettings()
+      .then((nextSettings) => {
+        if (!cancelled) {
+          applySettingsNow(nextSettings);
+        }
+      })
+      .catch((error) => {
+        warnExtensionStorageUnavailableOnce("读取设置", error);
+        if (!cancelled) {
+          applySettingsNow(DEFAULT_SETTINGS);
+        }
+      });
 
     const handleSettingsChange = (
       changes: Record<string, chrome.storage.StorageChange>,
@@ -4821,11 +6158,27 @@ function ConversationNavigator() {
       applySettingsNow(normalizeSettings(changes[STORAGE_SETTINGS_KEY].newValue));
     };
 
-    chrome.storage.onChanged.addListener(handleSettingsChange);
+    const storageChanged = getExtensionStorageOnChanged();
+    if (storageChanged) {
+      try {
+        storageChanged.addListener(handleSettingsChange);
+      } catch (error) {
+        warnExtensionStorageUnavailableOnce("监听设置变化", error);
+      }
+    } else {
+      warnExtensionStorageUnavailableOnce("监听设置变化");
+    }
 
     return () => {
       cancelled = true;
-      chrome.storage.onChanged.removeListener(handleSettingsChange);
+      const cleanupStorageChanged = getExtensionStorageOnChanged();
+      if (cleanupStorageChanged) {
+        try {
+          cleanupStorageChanged.removeListener(handleSettingsChange);
+        } catch {
+          // Extension context may already be invalidated while the page unloads.
+        }
+      }
     };
   }, []);
 
@@ -4866,33 +6219,245 @@ function ConversationNavigator() {
     });
   }, [adapter.id]);
 
+  const updateCanvasResizeFrame = useCallback(() => {
+    if (adapter.id !== "chatgpt") {
+      canvasResizeTargetRef.current = null;
+      if (canvasResizeFrameRef.current) {
+        canvasResizeFrameRef.current = null;
+        setCanvasResizeFrame(null);
+      }
+      return;
+    }
+
+    let target = canvasResizeTargetRef.current;
+    if (
+      !isCanvasLayoutSessionConnected(target) ||
+      (target && !isRectVisible(target.layoutTarget.getBoundingClientRect()))
+    ) {
+      target = syncCanvasWidthTargets(settingsRef.current, target) ?? getActiveCanvasWidthTarget();
+    } else {
+      markCanvasLayoutSession(target, shouldApplyCanvasWidthLayout(settingsRef.current));
+    }
+
+    canvasResizeTargetRef.current = target;
+    if (!shouldTrackCanvasWidthTarget(settingsRef.current)) {
+      if (canvasResizeFrameRef.current) {
+        canvasResizeFrameRef.current = null;
+        setCanvasResizeFrame(null);
+      }
+      return;
+    }
+
+    const nextFrame = target ? getCanvasResizeFrame(target, settingsRef.current) : null;
+
+    setCanvasResizeFrame((current) => {
+      if (areResizeFramesEqual(current, nextFrame)) {
+        return current;
+      }
+
+      canvasResizeFrameRef.current = nextFrame;
+      return nextFrame;
+    });
+  }, [adapter.id]);
+
+  useEffect(() => {
+    applyChatTypography(settings);
+  }, [
+    settings.chatFontScale,
+    settings.chatLetterSpacing,
+    settings.chatLineHeight
+  ]);
+
   useEffect(() => {
     applyChatTypography(settings);
     window.requestAnimationFrame(updateResizeFrame);
   }, [
     settings.chatContentWidth,
-    settings.chatFontScale,
-    settings.chatLetterSpacing,
-    settings.chatLineHeight,
-    settings.canvasFontScale,
-    settings.canvasLetterSpacing,
-    settings.canvasLineHeight,
     updateResizeFrame
   ]);
 
   useEffect(() => {
-    return () => {
-      if (openingTimerRef.current) {
-        window.clearTimeout(openingTimerRef.current);
+    const target = canvasResizeTargetRef.current;
+    const scrollSnapshot = shouldApplyCanvasTypography(target)
+      ? captureCanvasScroll(target)
+      : null;
+    applyCanvasTypography(settings);
+    if (scrollSnapshot) {
+      window.requestAnimationFrame(() => {
+        restoreCanvasScroll(scrollSnapshot);
+        window.requestAnimationFrame(() => restoreCanvasScroll(scrollSnapshot));
+      });
+    }
+  }, [
+    settings.canvasFontScale,
+    settings.canvasLetterSpacing,
+    settings.canvasLineHeight
+  ]);
+
+  useEffect(() => {
+    const widthScrollSnapshot = captureCanvasScroll(canvasResizeTargetRef.current);
+    applyCanvasTypography(settings);
+    let target = canvasResizeTargetRef.current;
+    if (!isCanvasLayoutSessionConnected(target)) {
+      target = syncCanvasWidthTargets(settingsRef.current, target);
+      canvasResizeTargetRef.current = target;
+    } else if (target) {
+      markCanvasLayoutSession(target, shouldApplyCanvasWidthLayout(settings));
+    }
+
+    if (target && shouldApplyCanvasWidthLayout(settings)) {
+      applyCanvasWidthTargetLayout(target, settings);
+    } else if (target) {
+      target.layoutTarget.style.removeProperty("--cnav-canvas-target-width");
+      target.lastWidthPixels = null;
+    }
+    if (widthScrollSnapshot) {
+      window.requestAnimationFrame(() => {
+        restoreCanvasScroll(widthScrollSnapshot);
+        window.requestAnimationFrame(() => restoreCanvasScroll(widthScrollSnapshot));
+      });
+    }
+    window.requestAnimationFrame(updateCanvasResizeFrame);
+  }, [
+    settings.canvasContentWidth,
+    settings.canvasWidthEnabled,
+    updateCanvasResizeFrame
+  ]);
+
+  useEffect(() => {
+    let frame = 0;
+    let observedSession: CanvasWidthTarget | null = null;
+
+    const observeSession = (session: CanvasWidthTarget | null) => {
+      if (observedSession === session) {
+        return;
       }
+      resizeObserver?.disconnect();
+      observedSession = session;
+      const main = document.querySelector<HTMLElement>("main");
+      if (main) {
+        resizeObserver?.observe(main);
+      }
+      if (session) {
+        resizeObserver?.observe(session.root);
+        resizeObserver?.observe(session.layoutTarget);
+        if (session.scrollContainer) {
+          resizeObserver?.observe(session.scrollContainer);
+        }
+      }
+    };
+
+    const scheduleFrameUpdate = () => {
+      if (!frame) {
+        frame = window.requestAnimationFrame(() => {
+          frame = 0;
+          updateCanvasResizeFrame();
+        });
+      }
+    };
+
+    const resizeObserver = typeof ResizeObserver === "function"
+      ? new ResizeObserver(scheduleFrameUpdate)
+      : null;
+
+    const refreshCanvasSession = (forceReplace = false) => {
+      const current = canvasResizeTargetRef.current;
+      if (forceReplace) {
+        clearCanvasLayoutSession(current);
+        canvasResizeTargetRef.current = null;
+      }
+
+      let next = canvasResizeTargetRef.current;
+      if (!isCanvasLayoutSessionConnected(next)) {
+        next = syncCanvasWidthTargets(settingsRef.current, next);
+        canvasResizeTargetRef.current = next;
+        if (next && shouldApplyCanvasWidthLayout(settingsRef.current)) {
+          applyCanvasWidthTargetLayout(next, settingsRef.current);
+        }
+      }
+
+      observeSession(next);
+      updateCanvasResizeFrame();
+    };
+
+    const scheduleSessionRefresh = (forceReplace = false) => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        refreshCanvasSession(forceReplace);
+      });
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      const current = canvasResizeTargetRef.current;
+      const relevantMutations = mutations.filter((mutation) => {
+        const element = mutation.target instanceof HTMLElement
+          ? mutation.target
+          : mutation.target.parentElement;
+        return Boolean(element && !element.closest(`#${ROOT_ID}`));
+      });
+      const result = canvasMutationsRequireSessionRefresh(
+        current,
+        relevantMutations,
+        (element) =>
+          element.matches(CANVAS_SHELL_SELECTOR) ||
+          element.matches(CANVAS_DISCOVERY_SELECTOR) ||
+          Boolean(element.querySelector(CANVAS_SHELL_SELECTOR))
+      );
+      const currentBecameHidden = Boolean(
+        current &&
+        relevantMutations.some((mutation) => mutation.type === "attributes" && mutation.target === current.root) &&
+        !isRectVisible(current.layoutTarget.getBoundingClientRect())
+      );
+      if (
+        current &&
+        current.kind === "document" &&
+        isVirtualizedCodeCanvas(current.root, current.textRoot)
+      ) {
+        current.kind = "virtualized-code";
+        markCanvasLayoutSession(current, shouldApplyCanvasWidthLayout(settingsRef.current));
+      }
+
+      if (result.replace || result.discover || currentBecameHidden) {
+        scheduleSessionRefresh(result.replace || currentBecameHidden);
+      }
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "data-testid", "aria-label", "role"]
+    });
+
+    refreshCanvasSession();
+    const handleWindowResize = () => {
+      const current = canvasResizeTargetRef.current;
+      if (current && shouldApplyCanvasWidthLayout(settingsRef.current)) {
+        applyCanvasWidthTargetLayout(current, settingsRef.current);
+      }
+      scheduleFrameUpdate();
+    };
+    window.addEventListener("resize", handleWindowResize);
+
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      observer.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", handleWindowResize);
+      clearCanvasLayoutSession(canvasResizeTargetRef.current);
+      canvasResizeTargetRef.current = null;
+      clearOrphanedCanvasLayoutMarkers();
+    };
+  }, [updateCanvasResizeFrame]);
+
+  useEffect(() => {
+    return () => {
       if (scanTimerRef.current) {
         window.clearTimeout(scanTimerRef.current);
-      }
-      if (settingsSaveTimerRef.current) {
-        window.clearTimeout(settingsSaveTimerRef.current);
-      }
-      if (settingsPreviewFrameRef.current) {
-        window.cancelAnimationFrame(settingsPreviewFrameRef.current);
       }
       cancelIdleWork(scanIdleWorkRef.current);
     };
@@ -4900,23 +6465,24 @@ function ConversationNavigator() {
 
   useEffect(() => {
     updateResizeFrame();
+    updateCanvasResizeFrame();
     const handleResize = () => updateResizeFrame();
-    const interval = window.setInterval(updateResizeFrame, 1600);
-
+    const handleCanvasResize = () => updateCanvasResizeFrame();
     window.addEventListener("resize", handleResize);
+    window.addEventListener("resize", handleCanvasResize);
 
     return () => {
-      window.clearInterval(interval);
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", handleCanvasResize);
     };
-  }, [pageId, updateResizeFrame]);
+  }, [pageId, updateCanvasResizeFrame, updateResizeFrame]);
 
   useEffect(() => {
     let frame = 0;
 
     const updateScrollJumpPosition = () => {
       frame = 0;
-      const nextPosition = getScrollJumpPosition(settingsRef.current.collapsed);
+      const nextPosition = getScrollJumpPosition(true);
       setScrollJumpPosition((current) =>
         current.right === nextPosition.right && current.bottom === nextPosition.bottom
           ? current
@@ -4939,7 +6505,6 @@ function ConversationNavigator() {
     });
 
     scheduleUpdate();
-    const interval = window.setInterval(scheduleUpdate, 1600);
     window.addEventListener("scroll", scheduleUpdate, true);
     window.addEventListener("resize", scheduleUpdate);
 
@@ -4948,91 +6513,37 @@ function ConversationNavigator() {
         window.cancelAnimationFrame(frame);
       }
       observer.disconnect();
-      window.clearInterval(interval);
       window.removeEventListener("scroll", scheduleUpdate, true);
       window.removeEventListener("resize", scheduleUpdate);
     };
-  }, [settings.collapsed]);
-
-  useEffect(() => {
-    if (!settings.autoCollapseOnOutsideClick || settings.collapsed) {
-      return undefined;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target || document.getElementById(ROOT_ID)?.contains(target)) {
-        return;
-      }
-
-      updateSettings({ collapsed: true });
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-    };
-  }, [settings.autoCollapseOnOutsideClick, settings.collapsed]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadState() {
-      const storedRecord = await readStoredRecord(settings, pageKey);
-
-      if (cancelled) {
-        return;
-      }
-
-      const nextFavorites = storedRecord?.favorites ?? {};
-      const nextGroupCollapsed = storedRecord?.groupCollapsed ?? {};
-      const restoredItems = restoreItemsFromRecord(storedRecord, nextFavorites);
-      const restoredEntries = restoreMapEntriesFromItems(restoredItems);
-      favoritesRef.current = nextFavorites;
-      groupCollapsedRef.current = nextGroupCollapsed;
-      itemsRef.current = restoredItems;
-      mapEntriesRef.current = restoredEntries;
-      forceDomRebuildOnNextScanRef.current = restoredItems.length === 0;
-      lastRecordSignatureRef.current = makeRecordSignature(restoredItems, nextFavorites, nextGroupCollapsed);
-      setFavorites(nextFavorites);
-      setGroupCollapsed(nextGroupCollapsed);
-      setItems(restoredItems);
-      setMapEntries(restoredEntries);
-      setAdapterHealth(storedRecord?.health ? {
-        status: storedRecord.health.status,
-        reason: storedRecord.health.reason,
-        ruleId: storedRecord.health.ruleId,
-        messageCount: storedRecord.health.messageCount,
-        userCount: storedRecord.health.userCount,
-        assistantCount: storedRecord.health.assistantCount,
-        canAnchor: false,
-        tokenTextAvailable: restoredEntries.length > 0,
-        source: storedRecord.health.source
-      } : createDefaultAdapterHealth());
-    }
-
-    loadState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pageKey, settings.cacheMode]);
+  }, []);
 
   useEffect(() => {
     scheduleScan(100);
   }, [
-    favorites,
     modelCatalog,
     pageKey,
     scheduleScan,
     settings.compatRulesRemoteEnabled,
     settings.compatRulesSource,
-    settings.cacheMode,
     settings.manualTokenBudget,
     settings.tokenBudgetMode,
     settings.tokenModelId
   ]);
+
+  useEffect(() => {
+    const handleTokenCountsUpdated = (event: Event) => {
+      const sessionId = event instanceof CustomEvent
+        ? (event.detail as { sessionId?: string } | undefined)?.sessionId
+        : undefined;
+      if (!isCurrentTokenSession(sessionId, sessionIdRef.current)) {
+        return;
+      }
+      scheduleScan(50);
+    };
+    window.addEventListener(TOKEN_COUNTS_UPDATED_EVENT, handleTokenCountsUpdated);
+    return () => window.removeEventListener(TOKEN_COUNTS_UPDATED_EVENT, handleTokenCountsUpdated);
+  }, [scheduleScan]);
 
   useEffect(() => {
     const getMutationElement = (mutation: MutationRecord): HTMLElement | null => {
@@ -5047,6 +6558,7 @@ function ConversationNavigator() {
     const observer = new MutationObserver((mutations) => {
       let hasRelevantMutation = false;
       let textOnly = true;
+      let removedConversationContent = false;
 
       for (const mutation of mutations) {
         const element = getMutationElement(mutation);
@@ -5057,11 +6569,26 @@ function ConversationNavigator() {
         hasRelevantMutation = true;
         if (mutation.type !== "characterData") {
           textOnly = false;
-          break;
+          removedConversationContent ||= Array.from(mutation.removedNodes).some((node) =>
+            node instanceof HTMLElement &&
+            (
+              node.matches(CHATGPT_TURN_OR_MARKER_SELECTOR) ||
+              Boolean(node.querySelector(CHATGPT_TURN_OR_MARKER_SELECTOR))
+            )
+          );
         }
       }
 
       if (!hasRelevantMutation) {
+        return;
+      }
+
+      if (
+        removedConversationContent &&
+        mapEntriesRef.current.length > 0 &&
+        getAdapter().collect().messages.length === 0
+      ) {
+        resetConversationState();
         return;
       }
 
@@ -5077,74 +6604,13 @@ function ConversationNavigator() {
     return () => {
       observer.disconnect();
     };
-  }, [scheduleScan]);
-
-  useEffect(() => {
-    if (
-      settings.collapsed ||
-      items.length === 0 ||
-      favoritesOnly ||
-      query.trim() ||
-      !revealLatestOnNextPaintRef.current
-    ) {
-      return undefined;
-    }
-
-    revealLatestOnNextPaintRef.current = false;
-
-    const scrollToLatest = () => {
-      const list = listRef.current;
-      if (!list) {
-        return;
-      }
-
-      list.scrollTo({
-        top: list.scrollHeight,
-        behavior: "smooth"
-      });
-    };
-
-    const frame = window.requestAnimationFrame(scrollToLatest);
-    const timer = window.setTimeout(scrollToLatest, 180);
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [favoritesOnly, items.length, query, settings.collapsed]);
+  }, [resetConversationState, scheduleScan]);
 
   useEffect(() => {
     let frame = 0;
 
     const updateViewport = () => {
       frame = 0;
-      let selected: string | null = null;
-      let bestTop = Number.NEGATIVE_INFINITY;
-      const threshold = window.innerHeight * 0.45;
-
-      for (const item of items) {
-        const element = anchorRegistry.get(item.id);
-        if (!element) {
-          continue;
-        }
-
-        const rect = element.getBoundingClientRect();
-        if (rect.top <= threshold && rect.bottom >= 0 && rect.top > bestTop) {
-          selected = item.id;
-          bestTop = rect.top;
-        }
-      }
-
-      if (!selected) {
-        selected =
-          items.find((item) => {
-            const element = anchorRegistry.get(item.id);
-            const rect = element?.getBoundingClientRect();
-            return rect ? rect.top >= 0 && rect.top < window.innerHeight : false;
-          })?.id ?? null;
-      }
-
-      setActiveId(selected);
       if (settingsRef.current.tokenPanelEnabled) {
         setViewportMetrics(createViewportMetrics(mapEntries));
       }
@@ -5158,38 +6624,17 @@ function ConversationNavigator() {
     };
 
     scheduleViewportUpdate();
-    window.addEventListener("scroll", scheduleViewportUpdate, { passive: true });
+    window.addEventListener("scroll", scheduleViewportUpdate, { passive: true, capture: true });
     window.addEventListener("resize", scheduleViewportUpdate);
 
     return () => {
       if (frame) {
         window.cancelAnimationFrame(frame);
       }
-      window.removeEventListener("scroll", scheduleViewportUpdate);
+      window.removeEventListener("scroll", scheduleViewportUpdate, true);
       window.removeEventListener("resize", scheduleViewportUpdate);
     };
-  }, [items, mapEntries, settings.tokenPanelEnabled]);
-
-  const filteredItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return items.filter((item) => {
-      if (favoritesOnly && !item.favorite) {
-        return false;
-      }
-
-      if (!normalizedQuery) {
-        return true;
-      }
-
-      return getNavigatorSearchText(item).toLowerCase().includes(normalizedQuery);
-    });
-  }, [favoritesOnly, items, query]);
-  const allGroups = useMemo(() => buildNavigatorGroups(items, settings.language), [items, settings.language]);
-  const filteredItemIds = useMemo(() => new Set(filteredItems.map((item) => item.id)), [filteredItems]);
-  const visibleGroups = useMemo(
-    () => filterNavigatorGroups(allGroups, filteredItemIds),
-    [allGroups, filteredItemIds]
-  );
+  }, [mapEntries, settings.tokenPanelEnabled]);
 
   const tokenStats = useMemo(
     () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
@@ -5200,96 +6645,16 @@ function ConversationNavigator() {
     [items, mapEntries]
   );
   const tokenBudgetPercent = tokenStats.budget > 0 ? (tokenStats.total / tokenStats.budget) * 100 : 0;
-  const healthLabel =
-    adapterHealth.status === "ok"
-      ? t.adapterStatusOk
-      : adapterHealth.status === "degraded"
-        ? t.adapterStatusDegraded
-        : t.adapterStatusUnsupported;
   const hudPosition =
     tokenHudDraft ??
     (settings.tokenHudX > 0 || settings.tokenHudY > 0
       ? { x: settings.tokenHudX, y: settings.tokenHudY }
       : null);
 
-  const cacheLabel =
-    settings.cacheMode === "chrome"
-      ? t.extensionCache
-      : settings.cacheMode === "page"
-        ? t.pageCache
-        : t.memoryOnly;
-  const showThreadHandles = Boolean(resizeFrame && (settings.threadResizeEnabled || resizingSide));
-  const showWidthToggle = Boolean(resizeFrame);
-  const widthToggleLabels =
-    settings.language === "en"
-      ? {
-          enable: "Show width handles",
-          disable: "Hide width handles"
-        }
-      : settings.language === "zh-TW"
-        ? {
-            enable: "顯示寬度調節",
-            disable: "隱藏寬度調節"
-          }
-        : {
-            enable: "显示宽度调节",
-            disable: "隐藏宽度调节"
-          };
-  const navLabels =
-    settings.language === "en"
-      ? {
-          collapseGroup: "Collapse group",
-          expandGroup: "Expand group",
-          rename: "Rename / note",
-          customTitle: "Custom title",
-          note: "Note",
-          save: "Save",
-          cancel: "Cancel",
-          restore: "Restore default"
-        }
-      : settings.language === "zh-TW"
-        ? {
-            collapseGroup: "折疊分組",
-            expandGroup: "展開分組",
-            rename: "重命名/備註",
-            customTitle: "自定義標題",
-            note: "備註",
-            save: "保存",
-            cancel: "取消",
-            restore: "恢復默認"
-          }
-        : {
-            collapseGroup: "折叠分组",
-            expandGroup: "展开分组",
-            rename: "重命名/备注",
-            customTitle: "自定义标题",
-            note: "备注",
-            save: "保存",
-            cancel: "取消",
-            restore: "恢复默认"
-          };
-
-  const toggleCollapsed = async () => {
-    if (settings.collapsed) {
-      revealLatestOnNextPaintRef.current = true;
-      setIsOpening(true);
-      if (openingTimerRef.current) {
-        window.clearTimeout(openingTimerRef.current);
-      }
-      openingTimerRef.current = window.setTimeout(() => {
-        setIsOpening(false);
-        openingTimerRef.current = undefined;
-      }, 300);
-    } else {
-      setIsOpening(false);
-      if (openingTimerRef.current) {
-        window.clearTimeout(openingTimerRef.current);
-        openingTimerRef.current = undefined;
-      }
-    }
-
-    await updateSettings({ collapsed: !settings.collapsed });
-  };
+  const showCanvasHandles = Boolean(canvasResizeFrame && (settings.canvasWidthEnabled || canvasResizingSide));
+  const showThreadHandles = Boolean(resizeFrame && (settings.threadResizeEnabled || resizingSide) && !showCanvasHandles);
+  const showFloatingTokenPanel = true;
+  const navigatorCollapsedForFloatingTools = true;
 
   const startThreadResize =
     (side: "left" | "right") => (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -5313,17 +6678,13 @@ function ConversationNavigator() {
       let dragFrame = 0;
 
       setResizingSide(side);
+      setResizePreviewValue(latestValue);
       document.body.style.cursor = "ew-resize";
       document.body.style.userSelect = "none";
 
       const applyDragPreview = () => {
         dragFrame = 0;
-        const nextSettings = normalizeSettings({
-          ...settingsRef.current,
-          chatContentWidth: latestValue,
-          chatLayoutVersion: 2
-        });
-        const width = Math.min(getThreadWidthPixels(nextSettings.chatContentWidth), availableWidth);
+        const width = Math.min(getThreadWidthPixels(latestValue), availableWidth);
         const nextFrame = {
           left: Math.round(center - width / 2),
           right: Math.round(center + width / 2),
@@ -5332,8 +6693,7 @@ function ConversationNavigator() {
           toggleLeft: Math.round(Math.max(18, leftBound + 18))
         };
 
-        settingsRef.current = nextSettings;
-        applyChatTypography(nextSettings);
+        setResizePreviewValue(latestValue);
         setResizeFrame((current) => {
           if (areResizeFramesEqual(current, nextFrame)) {
             return current;
@@ -5357,10 +6717,24 @@ function ConversationNavigator() {
         scheduleDragPreview();
       };
 
-      const handleUp = () => {
+      const finishResize = (commit: boolean) => {
         if (dragFrame) {
           window.cancelAnimationFrame(dragFrame);
-          applyDragPreview();
+          dragFrame = 0;
+        }
+
+        setResizingSide(null);
+        setResizePreviewValue(null);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        document.removeEventListener("pointermove", handleMove, true);
+        document.removeEventListener("pointerup", handleUp, true);
+        document.removeEventListener("pointercancel", handleCancel, true);
+        document.removeEventListener("keydown", handleKeyDown, true);
+
+        if (!commit) {
+          window.requestAnimationFrame(updateResizeFrame);
+          return;
         }
 
         const finalSettings = normalizeSettings({
@@ -5368,19 +6742,133 @@ function ConversationNavigator() {
           chatContentWidth: latestValue,
           chatLayoutVersion: 2
         });
-        setResizingSide(null);
-        document.body.style.cursor = previousCursor;
-        document.body.style.userSelect = previousUserSelect;
-        document.removeEventListener("pointermove", handleMove, true);
-        document.removeEventListener("pointerup", handleUp, true);
-        document.removeEventListener("pointercancel", handleUp, true);
         applySettingsNow(finalSettings);
         void saveSettings(finalSettings);
       };
 
+      const handleUp = () => finishResize(true);
+      const handleCancel = () => finishResize(false);
+      const handleKeyDown = (keyEvent: KeyboardEvent) => {
+        if (keyEvent.key === "Escape") {
+          keyEvent.preventDefault();
+          finishResize(false);
+        }
+      };
+
       document.addEventListener("pointermove", handleMove, true);
       document.addEventListener("pointerup", handleUp, true);
-      document.addEventListener("pointercancel", handleUp, true);
+      document.addEventListener("pointercancel", handleCancel, true);
+      document.addEventListener("keydown", handleKeyDown, true);
+    };
+
+  const startCanvasResize =
+    (side: "left" | "right") => (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const initialTarget = canvasResizeTargetRef.current ?? getActiveCanvasWidthTarget();
+      if (!initialTarget) {
+        return;
+      }
+
+      const startX = event.clientX;
+      const boundsRect = getCanvasResizeBoundsRect(initialTarget.layoutTarget, initialTarget.root);
+      const leftBound = Math.max(0, boundsRect.left);
+      const rightBound = Math.min(window.innerWidth, boundsRect.right);
+      const availableWidth = Math.max(340, rightBound - leftBound - 24);
+      const minWidth = getThreadWidthPixels(THREAD_WIDTH_MIN);
+      const maxWidth = Math.min(availableWidth, getThreadWidthPixels(THREAD_WIDTH_MAX));
+      const startWidth = Math.min(maxWidth, Math.max(minWidth, getThreadWidthPixels(settingsRef.current.canvasContentWidth)));
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      let latestValue = settingsRef.current.canvasContentWidth;
+      let latestWidthPixels = startWidth;
+      let dragFrame = 0;
+
+      setCanvasResizingSide(side);
+      setCanvasResizePreviewValue(latestValue);
+      document.body.style.cursor = "ew-resize";
+      document.body.style.userSelect = "none";
+
+      const applyDragPreview = () => {
+        dragFrame = 0;
+        const nextSettings = normalizeSettings({
+          ...settingsRef.current,
+          canvasWidthEnabled: true,
+          canvasContentWidth: latestValue,
+          chatLayoutVersion: 2
+        });
+        const nextTarget = canvasResizeTargetRef.current ?? initialTarget;
+        const nextFrame = getCanvasResizeFrame(nextTarget, nextSettings, latestWidthPixels);
+        setCanvasResizePreviewValue(latestValue);
+        setCanvasResizeFrame((current) => {
+          if (areResizeFramesEqual(current, nextFrame)) {
+            return current;
+          }
+
+          canvasResizeFrameRef.current = nextFrame;
+          return nextFrame;
+        });
+      };
+
+      const scheduleDragPreview = () => {
+        if (!dragFrame) {
+          dragFrame = window.requestAnimationFrame(applyDragPreview);
+        }
+      };
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        const delta = side === "right" ? moveEvent.clientX - startX : startX - moveEvent.clientX;
+        latestWidthPixels = Math.min(maxWidth, Math.max(minWidth, startWidth + delta * 2));
+        latestValue = getThreadWidthSettingFromPixels(latestWidthPixels, false);
+        scheduleDragPreview();
+      };
+
+      const finishResize = (commit: boolean) => {
+        if (dragFrame) {
+          window.cancelAnimationFrame(dragFrame);
+          dragFrame = 0;
+        }
+
+        setCanvasResizingSide(null);
+        setCanvasResizePreviewValue(null);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        document.removeEventListener("pointermove", handleMove, true);
+        document.removeEventListener("pointerup", handleUp, true);
+        document.removeEventListener("pointercancel", handleCancel, true);
+        document.removeEventListener("keydown", handleKeyDown, true);
+
+        if (!commit) {
+          window.requestAnimationFrame(updateCanvasResizeFrame);
+          return;
+        }
+
+        const finalSettings = normalizeSettings({
+          ...settingsRef.current,
+          canvasWidthEnabled: true,
+          canvasContentWidth: latestValue,
+          chatLayoutVersion: 2
+        });
+        applySettingsNow(finalSettings);
+        window.requestAnimationFrame(updateCanvasResizeFrame);
+        void saveSettings(finalSettings);
+      };
+
+      const handleUp = () => finishResize(true);
+      const handleCancel = () => finishResize(false);
+      const handleKeyDown = (keyEvent: KeyboardEvent) => {
+        if (keyEvent.key === "Escape") {
+          keyEvent.preventDefault();
+          finishResize(false);
+        }
+      };
+
+      document.addEventListener("pointermove", handleMove, true);
+      document.addEventListener("pointerup", handleUp, true);
+      document.addEventListener("pointercancel", handleCancel, true);
+      document.addEventListener("keydown", handleKeyDown, true);
     };
 
   const startTokenHudDrag = (event: React.PointerEvent<HTMLElement>) => {
@@ -5427,104 +6915,6 @@ function ConversationNavigator() {
     document.addEventListener("pointermove", handleMove, true);
     document.addEventListener("pointerup", handleUp, true);
     document.addEventListener("pointercancel", handleUp, true);
-  };
-
-  const commitNavigatorState = async (
-    nextItems: NavigatorItem[],
-    nextFavorites = favoritesRef.current,
-    nextGroupCollapsed = groupCollapsedRef.current
-  ) => {
-    favoritesRef.current = nextFavorites;
-    groupCollapsedRef.current = nextGroupCollapsed;
-    itemsRef.current = nextItems;
-    setFavorites(nextFavorites);
-    setGroupCollapsed(nextGroupCollapsed);
-    setItems(nextItems);
-    lastRecordSignatureRef.current = makeRecordSignature(nextItems, nextFavorites, nextGroupCollapsed);
-    await persistRecord(
-      settingsRef.current,
-      pageKeyRef.current,
-      nextItems,
-      nextFavorites,
-      adapterHealth,
-      nextGroupCollapsed
-    );
-  };
-
-  const toggleFavorite = async (item: NavigatorItem) => {
-    const nextFavorites = { ...favorites };
-    const itemFavorite = Boolean(nextFavorites[item.id]);
-
-    if (itemFavorite) {
-      delete nextFavorites[item.id];
-    } else {
-      nextFavorites[item.id] = true;
-    }
-
-    const nextItems = items.map((current) => ({
-      ...current,
-      favorite: current.id === item.id ? !itemFavorite : current.favorite
-    }));
-
-    setMapEntries((currentEntries) => {
-      const nextEntries = currentEntries.map((entry) =>
-        entry.id === item.id ? { ...entry, favorite: !itemFavorite } : entry
-      );
-      mapEntriesRef.current = nextEntries;
-      return nextEntries;
-    });
-    await commitNavigatorState(nextItems, nextFavorites, groupCollapsedRef.current);
-  };
-
-  const beginEditingItem = (item: NavigatorItem) => {
-    setEditingItemId(item.id);
-    setEditingTitle(item.customTitle || "");
-    setEditingNote(item.note || "");
-  };
-
-  const updateNavigatorItemMetadata = async (id: string, title: string, note: string) => {
-    const nextTitle = normalizeText(title).slice(0, 80);
-    const nextNote = normalizeText(note).slice(0, 180);
-    const nextItems = itemsRef.current.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            customTitle: nextTitle || undefined,
-            note: nextNote || undefined
-          }
-        : item
-    );
-
-    await commitNavigatorState(nextItems, favoritesRef.current, groupCollapsedRef.current);
-  };
-
-  const saveEditingItem = async () => {
-    if (!editingItemId) {
-      return;
-    }
-
-    await updateNavigatorItemMetadata(editingItemId, editingTitle, editingNote);
-    setEditingItemId(null);
-  };
-
-  const restoreNavigatorItemTitle = async (item: NavigatorItem) => {
-    await updateNavigatorItemMetadata(item.id, "", "");
-    if (editingItemId === item.id) {
-      setEditingTitle("");
-      setEditingNote("");
-      setEditingItemId(null);
-    }
-  };
-
-  const toggleGroupCollapsed = async (groupId: string) => {
-    const nextGroupCollapsed = { ...groupCollapsedRef.current };
-    if (nextGroupCollapsed[groupId]) {
-      delete nextGroupCollapsed[groupId];
-    } else {
-      nextGroupCollapsed[groupId] = true;
-    }
-
-    await commitNavigatorState(itemsRef.current, favoritesRef.current, nextGroupCollapsed);
   };
 
   const renderTokenPanel = (variant: "hud" | "dock") => {
@@ -5597,19 +6987,6 @@ function ConversationNavigator() {
               ? `${formatTokenCount(tokenStats.total)} · ${Math.round(tokenBudgetPercent)}%`
               : t.tokenPanelEstimated}
           </small>
-          <button
-            type="button"
-            className="cnav-token-mini-button"
-            title={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
-            aria-label={settings.tokenPanelMode === "floating" ? t.tokenPanelDock : t.tokenPanelFloating}
-            onClick={() =>
-              updateSettings({
-                tokenPanelMode: settings.tokenPanelMode === "floating" ? "dock" : "floating"
-              })
-            }
-          >
-            <ChevronsUpDown size={13} aria-hidden="true" />
-          </button>
           {variant === "hud" ? (
             <button
               type="button"
@@ -5659,11 +7036,9 @@ function ConversationNavigator() {
               <summary>{tokenPanelLabels.details}</summary>
               <div className="cnav-token-detail-list">
                 {tokenDetailEntries.map((entry) => (
-                  <button
+                  <div
                     className={`cnav-token-detail is-heat-${entry.heatLevel}`}
-                    type="button"
                     key={entry.id}
-                    onClick={() => scrollToNavigatorItem(entry.id, settings.navigateAnimationEnabled)}
                   >
                     <span>
                       {entry.role === "user" ? tokenPanelLabels.user : tokenPanelLabels.assistant} #{entry.turnIndex}
@@ -5673,7 +7048,7 @@ function ConversationNavigator() {
                     <em>
                       {`${tokenPanelLabels.code} ${formatTokenCount(entry.codeTokens)} · ${tokenPanelLabels.table} ${formatTokenCount(entry.tableTokens)}`}
                     </em>
-                  </button>
+                  </div>
                 ))}
               </div>
             </details>
@@ -5688,6 +7063,14 @@ function ConversationNavigator() {
     <>
       {showThreadHandles && resizeFrame ? (
         <>
+          {resizePreviewValue !== null ? (
+            <div
+              className="cnav-resize-preview-label"
+              style={{ left: (resizeFrame.left + resizeFrame.right) / 2, top: resizeFrame.top + 10 }}
+            >
+              {Math.round(resizePreviewValue)}%
+            </div>
+          ) : null}
           <button
             className={`cnav-thread-handle is-left${resizingSide === "left" ? " is-dragging" : ""}`}
             type="button"
@@ -5715,34 +7098,58 @@ function ConversationNavigator() {
         </>
       ) : null}
 
-      {showWidthToggle ? (
-        <button
-          className={`cnav-width-toggle${settings.threadResizeEnabled ? " is-active" : ""}`}
-          type="button"
-          data-theme={theme}
-          style={{ left: resizeFrame?.toggleLeft ?? 18 }}
-          onClick={() => updateSettings({ threadResizeEnabled: !settings.threadResizeEnabled })}
-          onMouseDown={(event) => event.stopPropagation()}
-          title={settings.threadResizeEnabled ? widthToggleLabels.disable : widthToggleLabels.enable}
-          aria-label={settings.threadResizeEnabled ? widthToggleLabels.disable : widthToggleLabels.enable}
-          aria-pressed={settings.threadResizeEnabled}
-        >
-          <MoveHorizontal size={18} aria-hidden="true" />
-        </button>
+      {showCanvasHandles && canvasResizeFrame ? (
+        <>
+          {canvasResizePreviewValue !== null ? (
+            <div
+              className="cnav-resize-preview-label"
+              style={{
+                left: (canvasResizeFrame.left + canvasResizeFrame.right) / 2,
+                top: canvasResizeFrame.top + 10
+              }}
+            >
+              {Math.round(canvasResizePreviewValue)}%
+            </div>
+          ) : null}
+          <button
+            className={`cnav-thread-handle cnav-canvas-handle is-left${canvasResizingSide === "left" ? " is-dragging" : ""}`}
+            type="button"
+            style={{
+              left: canvasResizeFrame.left,
+              top: canvasResizeFrame.top,
+              height: canvasResizeFrame.height
+            }}
+            aria-label={`${t.canvasDisplay} ${t.contentWidth}`}
+            title={`${t.canvasDisplay} ${t.contentWidth}`}
+            onPointerDown={startCanvasResize("left")}
+          />
+          <button
+            className={`cnav-thread-handle cnav-canvas-handle is-right${canvasResizingSide === "right" ? " is-dragging" : ""}`}
+            type="button"
+            style={{
+              left: canvasResizeFrame.right,
+              top: canvasResizeFrame.top,
+              height: canvasResizeFrame.height
+            }}
+            aria-label={`${t.canvasDisplay} ${t.contentWidth}`}
+            title={`${t.canvasDisplay} ${t.contentWidth}`}
+            onPointerDown={startCanvasResize("right")}
+          />
+        </>
       ) : null}
 
-      {settings.tokenPanelMode === "floating" ? renderTokenPanel("hud") : null}
+      {showFloatingTokenPanel ? renderTokenPanel("hud") : null}
 
       <TableCopyLayer
         theme={theme}
         language={settings.language}
-        navigatorCollapsed={settings.collapsed}
+        navigatorCollapsed={navigatorCollapsedForFloatingTools}
       />
 
       <CodeBlockLayer
         theme={theme}
         language={settings.language}
-        navigatorCollapsed={settings.collapsed}
+        navigatorCollapsed={navigatorCollapsedForFloatingTools}
       />
 
       <div
@@ -5772,202 +7179,6 @@ function ConversationNavigator() {
         </button>
       </div>
 
-      <aside
-        className={`cnav-shell${settings.collapsed ? " is-collapsed" : ""}${isOpening ? " is-opening" : ""}`}
-        data-cache-mode={settings.cacheMode}
-        data-theme={theme}
-        aria-label={t.appName}
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
-      {settings.collapsed ? (
-        <button
-          className="cnav-collapsed-button"
-          type="button"
-          onClick={toggleCollapsed}
-          title={t.openNavigator}
-          aria-label={t.openNavigator}
-        >
-          <PanelRightOpen size={20} aria-hidden="true" />
-          <span>{items.length}</span>
-        </button>
-      ) : (
-        <div className="cnav-panel">
-          <header className="cnav-header">
-            <div className="cnav-title-group">
-              <span className="cnav-kicker">{adapter.label}</span>
-              <h1>{t.appName}</h1>
-              <span
-                className={`cnav-health-badge is-${adapterHealth.status}`}
-                title={`${adapterHealth.reason} · ${adapterHealth.ruleId}`}
-              >
-                {healthLabel}
-              </span>
-            </div>
-            <div className="cnav-header-actions">
-              <button
-                className="cnav-icon-button"
-                type="button"
-                onClick={toggleCollapsed}
-                title={t.collapseNavigator}
-                aria-label={t.collapseNavigator}
-              >
-                <PanelRightClose size={18} aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-
-          {settings.tokenPanelMode === "dock" ? renderTokenPanel("dock") : null}
-
-          <div className="cnav-controls">
-            <label className="cnav-search">
-              <Search size={16} aria-hidden="true" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder={t.searchNodes}
-                type="search"
-              />
-            </label>
-            <button
-              className={`cnav-icon-button${favoritesOnly ? " is-active" : ""}`}
-              type="button"
-              onClick={() => setFavoritesOnly((value) => !value)}
-              title={t.showFavoritesOnly}
-              aria-label={t.showFavoritesOnly}
-            >
-              <Star size={17} aria-hidden="true" />
-            </button>
-            <button
-              className="cnav-icon-button"
-              type="button"
-              onClick={scan}
-              title={t.refresh}
-              aria-label={t.refresh}
-            >
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-
-          <div className="cnav-list-wrap">
-            <div className="cnav-list" role="list" ref={listRef}>
-              {filteredItems.length === 0 ? (
-                <div className="cnav-empty">
-                  {items.length === 0 ? t.noNodes : t.noNodeMatches}
-                </div>
-              ) : (
-                visibleGroups.map((group) => {
-                  const hasActiveItem = group.items.some((item) => item.id === activeId);
-                  const isCollapsed = Boolean(groupCollapsed[group.id]) && !hasActiveItem;
-                  return (
-                    <section className={`cnav-group is-heat-${group.heatLevel}`} key={group.id}>
-                      <button
-                        className="cnav-group-head"
-                        type="button"
-                        onClick={() => toggleGroupCollapsed(group.id)}
-                        title={isCollapsed ? navLabels.expandGroup : navLabels.collapseGroup}
-                        aria-expanded={!isCollapsed}
-                      >
-                        {isCollapsed ? (
-                          <ChevronRight size={13} aria-hidden="true" />
-                        ) : (
-                          <ChevronDown size={13} aria-hidden="true" />
-                        )}
-                        <span>{group.label}</span>
-                        <small>{`${group.items.length} · ${formatTokenCount(group.tokenTotal)} ${t.tokenPanelShort}`}</small>
-                      </button>
-                      {isCollapsed ? null : (
-                        <div className="cnav-group-list">
-                          {group.items.map((item) => (
-                            <div
-                              className={`cnav-item${activeId === item.id ? " is-active" : ""}${item.mounted ? "" : " is-unmounted"} is-heat-${item.heatLevel}`}
-                              key={item.id}
-                              role="listitem"
-                            >
-                              <button
-                                className="cnav-item-main"
-                                type="button"
-                                onClick={() => scrollToNavigatorItem(item.id, settings.navigateAnimationEnabled)}
-                                title={item.mounted ? undefined : t.nodeUnmounted}
-                              >
-                                <span className="cnav-item-index">{item.turnIndex}</span>
-                                <span className="cnav-item-copy">
-                                  <span className="cnav-prompt">{getNavigatorDisplayTitle(item)}</span>
-                                  <span className="cnav-answer">{item.note || item.answerSummary}</span>
-                                  <span className="cnav-token-line">
-                                    {`${formatTokenCount(item.totalTokens)} ${t.tokenPanelShort}${item.mounted ? "" : ` · ${t.nodeUnmounted}`}`}
-                                  </span>
-                                </span>
-                                <ChevronRight className="cnav-item-arrow" size={15} aria-hidden="true" />
-                              </button>
-                              <button
-                                className="cnav-star"
-                                type="button"
-                                onClick={() => beginEditingItem(item)}
-                                title={navLabels.rename}
-                                aria-label={navLabels.rename}
-                              >
-                                <FileText size={14} aria-hidden="true" />
-                              </button>
-                              <button
-                                className={`cnav-star${item.favorite ? " is-favorite" : ""}`}
-                                type="button"
-                                onClick={() => toggleFavorite(item)}
-                                title={item.favorite ? t.favoriteRemove : t.favoriteAdd}
-                                aria-label={item.favorite ? t.favoriteRemove : t.favoriteAdd}
-                              >
-                                <Star size={15} aria-hidden="true" />
-                              </button>
-                              {editingItemId === item.id ? (
-                                <div className="cnav-item-editor">
-                                  <input
-                                    value={editingTitle}
-                                    onChange={(event) => setEditingTitle(event.currentTarget.value)}
-                                    placeholder={navLabels.customTitle}
-                                    maxLength={80}
-                                  />
-                                  <textarea
-                                    value={editingNote}
-                                    onChange={(event) => setEditingNote(event.currentTarget.value)}
-                                    placeholder={navLabels.note}
-                                    maxLength={180}
-                                    rows={2}
-                                  />
-                                  <div className="cnav-item-editor-actions">
-                                    <button type="button" onClick={() => void saveEditingItem()}>
-                                      <Check size={13} aria-hidden="true" />
-                                      <span>{navLabels.save}</span>
-                                    </button>
-                                    <button type="button" onClick={() => setEditingItemId(null)}>
-                                      <Minimize2 size={13} aria-hidden="true" />
-                                      <span>{navLabels.cancel}</span>
-                                    </button>
-                                    <button type="button" onClick={() => void restoreNavigatorItemTitle(item)}>
-                                      <RefreshCw size={13} aria-hidden="true" />
-                                      <span>{navLabels.restore}</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <footer className="cnav-footer">
-            <span>{`${items.length} ${t.nodesIndexed}`}</span>
-            <span className="cnav-watermark">{t.watermark}</span>
-            <span>{cacheLabel}</span>
-          </footer>
-        </div>
-      )}
-      </aside>
     </>
   );
 }
