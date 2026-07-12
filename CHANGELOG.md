@@ -1,6 +1,6 @@
 # 更新日志
 
-## 2026-V8.4新版ChatGPT全功能兼容版 / 2026.8.4 - 2026-07-12
+## 2026-V9正式版 / 2026.9.0 - 2026-07-12
 
 - 兼容新版 ChatGPT 的消息角色与轮次结构，同时支持 `data-message-author-role`、`data-author-role`、`data-author`、`data-role`、`data-turn`、`data-turn-id` 和 `data-message-id`。
 - 导航索引、Token 统计、文档导出、素材提取、正文排版、宽度调节、消息跳转和流式更新监听统一使用新的消息语义兼容层。

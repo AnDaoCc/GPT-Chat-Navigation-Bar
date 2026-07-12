@@ -1,6 +1,6 @@
 {
   "name": "gpt-chat-navigator-extension",
-  "version": "2026.8.4",
+  "version": "2026.9.0",
   "private": true,
   "type": "module",
   "description": "GPT页面增强工具：本地增强 ChatGPT 阅读显示、Token 估算、文档导出、素材收藏和复制工具。",
