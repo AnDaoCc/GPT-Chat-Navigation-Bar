@@ -1,46 +1,116 @@
-export const DEFAULT_CACHE_NAMESPACE = "conversationNavigator";
-export const STORAGE_RECORD_PREFIX = `${DEFAULT_CACHE_NAMESPACE}:page:`;
 export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
-export const PAGE_CACHE_LIST_MESSAGE = "conversationNavigator:pageCache:list";
-export const PAGE_CACHE_CLEAR_MESSAGE = "conversationNavigator:pageCache:clear";
+export const TOKEN_COUNT_BATCH_MESSAGE = "conversationNavigator:countTokensBatch";
+export const LIBRARY_STORAGE_KEY = "conversationNavigator:library:v1";
+export const MATERIALS_LIST_MESSAGE = "conversationNavigator:materials:list";
+export const SELECTION_GET_MESSAGE = "conversationNavigator:selection:get";
+export const EXPORT_SNAPSHOT_MESSAGE = "conversationNavigator:export:snapshot";
+export const PAGE_STATUS_MESSAGE = "conversationNavigator:pageStatus";
 
-export type CacheMode = "chrome" | "page" | "off";
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
-export type TokenPanelMode = "floating" | "dock";
 export type TokenBudgetMode = "model" | "manual";
 export type AdapterHealthStatus = "ok" | "degraded" | "unsupported";
 export type CompatRulesSource = "built-in" | "remote";
+export type LibraryItemKind = "prompt" | "code" | "selection";
 
-export interface StoredNavigatorNode {
+export interface TokenCountBatchItem {
   id: string;
+  text: string;
+}
+
+export interface TokenCountBatchRequest {
+  type: typeof TOKEN_COUNT_BATCH_MESSAGE;
+  sessionId: string;
+  items: TokenCountBatchItem[];
+}
+
+export interface TokenCountBatchResponse {
+  ok: boolean;
+  sessionId?: string;
+  counts?: Array<{ id: string; count: number }>;
+  error?: string;
+}
+
+export interface LibraryItem {
+  id: string;
+  kind: LibraryItemKind;
+  title: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+  sourceUrl: string;
+  sourceTitle: string;
+  pageKey: string;
+  language?: string;
+  filename?: string;
+}
+
+export interface StoredLibrary {
+  schemaVersion: 1;
+  updatedAt: number;
+  items: LibraryItem[];
+}
+
+export interface PageMaterial {
+  id: string;
+  kind: "prompt" | "code";
+  title: string;
+  text: string;
+  sourceUrl: string;
+  sourceTitle: string;
+  pageKey: string;
+  language?: string;
+  filename?: string;
+}
+
+export interface SelectionMaterial {
+  id: string;
+  kind: LibraryItemKind;
+  title: string;
+  text: string;
+  sourceUrl: string;
+  sourceTitle: string;
+  pageKey: string;
+  language?: string;
+  filename?: string;
+}
+
+export interface ExportChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  turnIndex: number;
+}
+
+export interface ExportCodeBlock {
+  id: string;
+  text: string;
+  language?: string;
+  filename?: string;
+}
+
+export interface ExportNavigatorNode {
+  id: string;
+  title: string;
   promptPreview: string;
   answerSummary: string;
-  customTitle?: string;
-  note?: string;
+  groupLabel: string;
   turnIndex: number;
-  domOrder?: number;
-  favorite: boolean;
-  promptTokens?: number;
-  answerTokens?: number;
-  totalTokens?: number;
-  heatLevel?: number;
-  updatedAt: number;
+  promptTokens: number;
+  answerTokens: number;
+  totalTokens: number;
 }
 
-export interface StoredConversationRecord {
-  schemaVersion: 1;
-  pageKey: string;
-  url: string;
-  host: string;
+export interface ExportSnapshot {
   title: string;
-  updatedAt: number;
-  nodes: StoredNavigatorNode[];
-  favorites: Record<string, true>;
-  groupCollapsed?: Record<string, true>;
-  health?: StoredAdapterHealth;
+  url: string;
+  pageKey: string;
+  exportedAt: number;
+  messages: ExportChatMessage[];
+  codeBlocks: ExportCodeBlock[];
+  nodes: ExportNavigatorNode[];
 }
 
-export interface StoredAdapterHealth {
+export interface PageAdapterHealth {
   status: AdapterHealthStatus;
   reason: string;
   ruleId: string;
@@ -52,9 +122,6 @@ export interface StoredAdapterHealth {
 }
 
 export interface NavigatorSettings {
-  collapsed: boolean;
-  cacheMode: CacheMode;
-  cacheNamespace: string;
   language: AppLanguage;
   chatFontScale: number;
   chatLetterSpacing: number;
@@ -62,12 +129,12 @@ export interface NavigatorSettings {
   canvasFontScale: number;
   canvasLetterSpacing: number;
   canvasLineHeight: number;
+  canvasContentWidth: number;
+  canvasWidthEnabled: boolean;
   chatLayoutVersion: 2;
   chatContentWidth: number;
   threadResizeEnabled: boolean;
-  autoCollapseOnOutsideClick: boolean;
   tokenPanelEnabled: boolean;
-  tokenPanelMode: TokenPanelMode;
   tokenPanelCollapsed: boolean;
   tokenBudgetMode: TokenBudgetMode;
   tokenModelId: string;
@@ -75,15 +142,13 @@ export interface NavigatorSettings {
   tokenHudX: number;
   tokenHudY: number;
   compatRulesRemoteEnabled: boolean;
+  compatRulesAutoSyncEnabled: boolean;
   compatRulesLastSyncAt: number;
   compatRulesSource: CompatRulesSource;
   navigateAnimationEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: NavigatorSettings = {
-  collapsed: false,
-  cacheMode: "chrome",
-  cacheNamespace: DEFAULT_CACHE_NAMESPACE,
   language: "zh-CN",
   chatFontScale: 100,
   chatLetterSpacing: 0,
@@ -91,12 +156,12 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   canvasFontScale: 100,
   canvasLetterSpacing: 0,
   canvasLineHeight: 155,
+  canvasContentWidth: 60,
+  canvasWidthEnabled: false,
   chatLayoutVersion: 2,
   chatContentWidth: 60,
   threadResizeEnabled: false,
-  autoCollapseOnOutsideClick: false,
   tokenPanelEnabled: true,
-  tokenPanelMode: "floating",
   tokenPanelCollapsed: false,
   tokenBudgetMode: "model",
   tokenModelId: "chatgpt-auto",
@@ -104,6 +169,7 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   tokenHudX: 0,
   tokenHudY: 0,
   compatRulesRemoteEnabled: false,
+  compatRulesAutoSyncEnabled: true,
   compatRulesLastSyncAt: 0,
   compatRulesSource: "built-in",
   navigateAnimationEnabled: true
@@ -118,30 +184,14 @@ export function clampNumber(value: unknown, min: number, max: number, fallback: 
   return Math.min(max, Math.max(min, number));
 }
 
-export function sanitizeCacheNamespace(value: string | undefined): string {
-  const normalized = (value || DEFAULT_CACHE_NAMESPACE)
-    .trim()
-    .replace(/[^a-zA-Z0-9:_-]/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 48);
-
-  return normalized || DEFAULT_CACHE_NAMESPACE;
-}
-
 export function normalizeSettings(value: Partial<NavigatorSettings> | undefined): NavigatorSettings {
-  const cacheMode: CacheMode =
-    value?.cacheMode === "page" || value?.cacheMode === "off" ? value.cacheMode : "chrome";
   const language: AppLanguage =
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
-  const tokenPanelMode: TokenPanelMode = value?.tokenPanelMode === "dock" ? "dock" : "floating";
   const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
   const compatRulesSource: CompatRulesSource = value?.compatRulesSource === "remote" ? "remote" : "built-in";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
   return {
-    collapsed: Boolean(value?.collapsed),
-    cacheMode,
-    cacheNamespace: sanitizeCacheNamespace(value?.cacheNamespace),
     language,
     chatFontScale: clampNumber(value?.chatFontScale, 85, 220, 100),
     chatLetterSpacing: clampNumber(value?.chatLetterSpacing, 0, 8, 0),
@@ -149,12 +199,12 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     canvasFontScale: clampNumber(value?.canvasFontScale, 75, 220, 100),
     canvasLetterSpacing: clampNumber(value?.canvasLetterSpacing, 0, 8, 0),
     canvasLineHeight: clampNumber(value?.canvasLineHeight, 120, 230, 155),
+    canvasContentWidth: clampNumber(isCurrentLayout ? value?.canvasContentWidth : undefined, 60, 100, 60),
+    canvasWidthEnabled: Boolean(value?.canvasWidthEnabled),
     chatLayoutVersion: 2,
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
     threadResizeEnabled: Boolean(value?.threadResizeEnabled),
-    autoCollapseOnOutsideClick: Boolean(value?.autoCollapseOnOutsideClick),
     tokenPanelEnabled: value?.tokenPanelEnabled !== false,
-    tokenPanelMode,
     tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
     tokenBudgetMode,
     tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim()
@@ -164,20 +214,36 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
     tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0)),
     compatRulesRemoteEnabled: Boolean(value?.compatRulesRemoteEnabled),
+    compatRulesAutoSyncEnabled: value?.compatRulesAutoSyncEnabled !== false,
     compatRulesLastSyncAt: Math.round(clampNumber(value?.compatRulesLastSyncAt, 0, Number.MAX_SAFE_INTEGER, 0)),
     compatRulesSource: value?.compatRulesRemoteEnabled ? compatRulesSource : "built-in",
     navigateAnimationEnabled: value?.navigateAnimationEnabled !== false
   };
 }
 
-export function makeRecordKey(namespace: string, pageId: string): string {
-  return `${sanitizeCacheNamespace(namespace)}:page:${pageId}`;
-}
-
-export function isNavigatorRecordKey(key: string, namespace?: string): boolean {
-  if (namespace) {
-    return key.startsWith(`${sanitizeCacheNamespace(namespace)}:page:`);
+export function isLegacyConversationRecord(value: unknown, key?: string): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
   }
 
-  return /^[a-zA-Z0-9:_-]+:page:/.test(key);
+  const record = value as {
+    schemaVersion?: unknown;
+    pageKey?: unknown;
+    nodes?: unknown;
+  };
+  if (
+    record.schemaVersion !== 1 ||
+    typeof record.pageKey !== "string" ||
+    !Array.isArray(record.nodes)
+  ) {
+    return false;
+  }
+
+  return key === undefined || (key.includes(":page:") && record.pageKey === key);
+}
+
+export function findLegacyConversationRecordKeys(values: Record<string, unknown>): string[] {
+  return Object.entries(values)
+    .filter(([key, value]) => isLegacyConversationRecord(value, key))
+    .map(([key]) => key);
 }

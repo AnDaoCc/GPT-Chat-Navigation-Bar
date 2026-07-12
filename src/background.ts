@@ -1,8 +1,25 @@
+import {
+  findLegacyConversationRecordKeys,
+  normalizeSettings,
+  STORAGE_SETTINGS_KEY,
+  TOKEN_COUNT_BATCH_MESSAGE,
+  TokenCountBatchResponse
+} from "./shared";
+import { countTokenBatchItems, normalizeTokenBatchItems } from "./tokenWorker";
+
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get("conversationNavigator:installedAt", (result) => {
-    if (!result["conversationNavigator:installedAt"]) {
+  chrome.storage.local.get(null, (result) => {
+    const legacyKeys = findLegacyConversationRecordKeys(result);
+    if ("conversationNavigator:installedAt" in result) {
+      legacyKeys.push("conversationNavigator:installedAt");
+    }
+    if (legacyKeys.length > 0) {
+      chrome.storage.local.remove(legacyKeys);
+    }
+
+    if (result[STORAGE_SETTINGS_KEY]) {
       chrome.storage.local.set({
-        "conversationNavigator:installedAt": Date.now()
+        [STORAGE_SETTINGS_KEY]: normalizeSettings(result[STORAGE_SETTINGS_KEY])
       });
     }
   });
@@ -38,6 +55,31 @@ function isAllowedModelSyncUrl(value: string): boolean {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === TOKEN_COUNT_BATCH_MESSAGE) {
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId.slice(0, 160) : "";
+    const items = normalizeTokenBatchItems(message.items);
+    if (!sessionId || items.length === 0) {
+      sendResponse({
+        ok: false,
+        sessionId,
+        error: "Token batch is invalid"
+      } satisfies TokenCountBatchResponse);
+      return false;
+    }
+
+    try {
+      const counts = countTokenBatchItems(items);
+      sendResponse({ ok: true, sessionId, counts } satisfies TokenCountBatchResponse);
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      } satisfies TokenCountBatchResponse);
+    }
+    return false;
+  }
+
   if (message?.type !== "conversationNavigator:fetchText") {
     return false;
   }

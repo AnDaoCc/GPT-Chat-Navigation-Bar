@@ -17,7 +17,7 @@ chrome://extensions
 4. 选择打包后的目录：
 
 ```text
-D:\APPKF\GPT聊天导航\release\conversation-navigator-unpacked
+D:\APPKF\GPT页面增强工具\release\conversation-navigator-unpacked
 ```
 
 5. 打开或刷新 ChatGPT 页面。
@@ -27,7 +27,7 @@ D:\APPKF\GPT聊天导航\release\conversation-navigator-unpacked
 如果你正在开发或调试，也可以直接加载构建目录：
 
 ```text
-D:\APPKF\GPT聊天导航\dist
+D:\APPKF\GPT页面增强工具\dist
 ```
 
 每次修改源码后执行：
