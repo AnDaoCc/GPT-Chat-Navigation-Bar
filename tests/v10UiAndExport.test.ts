@@ -44,16 +44,22 @@ test("selective markdown and html exports honor metadata and contents preference
   assert.match(html as string, /class="export-toc"/);
 });
 
-test("the redesigned popup and page drawer include reduced-motion and responsive states", () => {
+test("the redesigned popup keeps an intrinsic Chrome popup size and responsive inner states", () => {
   const popupCss = readFileSync(new URL("../src/styles/popup.css", import.meta.url), "utf8");
   const contentCss = readFileSync(new URL("../src/styles/content.css", import.meta.url), "utf8");
   const popupSource = readFileSync(new URL("../src/popup.tsx", import.meta.url), "utf8");
   const contentSource = readFileSync(new URL("../src/contentScript.tsx", import.meta.url), "utf8");
 
-  assert.match(popupCss, /width:\s*min\(420px,\s*100vw\)/);
-  assert.match(popupCss, /height:\s*min\(600px,\s*100vh\)/);
-  assert.match(popupCss, /min-width:\s*0/);
-  assert.doesNotMatch(popupCss, /min-width:\s*420px/);
+  assert.match(
+    popupCss,
+    /html\s*\{[\s\S]*?width:\s*420px;[\s\S]*?min-width:\s*420px;[\s\S]*?height:\s*600px;[\s\S]*?min-height:\s*600px;/
+  );
+  assert.match(
+    popupCss,
+    /body,\s*#root\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?min-height:\s*0;/
+  );
+  assert.doesNotMatch(popupCss, /width:\s*min\(420px,\s*100vw\)/);
+  assert.doesNotMatch(popupCss, /height:\s*min\(600px,\s*100vh\)/);
   assert.match(popupCss, /@media\s*\(max-width:\s*340px\),\s*\(max-height:\s*440px\)/);
   assert.match(popupCss, /prefers-reduced-motion:\s*reduce/);
   assert.match(contentCss, /\.cnav-reading-drawer/);
