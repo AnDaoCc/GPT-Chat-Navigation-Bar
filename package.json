@@ -1,9 +1,9 @@
 {
   "name": "gpt-chat-navigator-extension",
-  "version": "2026.9.0",
+  "version": "2026.10.0",
   "private": true,
   "type": "module",
-  "description": "GPT页面增强工具：本地增强 ChatGPT 阅读显示、Token 估算、文档导出、素材收藏和复制工具。",
+  "description": "GPT页面增强工具：本地增强 ChatGPT 专注阅读、选择性导出、引用管理、排版与素材工具。",
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
@@ -12,7 +12,6 @@
     "package": "npm run build && powershell -ExecutionPolicy Bypass -File scripts/package.ps1"
   },
   "dependencies": {
-    "js-tiktoken": "^1.0.21",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

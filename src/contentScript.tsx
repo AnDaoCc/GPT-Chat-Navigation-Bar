@@ -1,46 +1,68 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  AlertTriangle,
   ArrowDownToLine,
   ArrowUpToLine,
-  BarChart3,
+  BookOpen,
   Check,
+  CheckCircle2,
+  CheckSquare2,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
+  ExternalLink,
   FileText,
-  GripVertical,
+  Focus,
+  Link2,
+  ListChecks,
+  Loader2,
   Minimize2,
-  Table2
+  PanelRightOpen,
+  Search,
+  Square,
+  Table2,
+  X
 } from "lucide-react";
 import {
   AppLanguage,
+  CITATION_CHECK_MESSAGE,
+  CITATION_STATE_STORAGE_KEY,
+  CitationCheckResult,
+  CitationRecord,
   CompatRulesSource,
+  DEFAULT_SELECTIVE_EXPORT_PREFERENCES,
   DEFAULT_SETTINGS,
+  EXPORT_PREFERENCES_STORAGE_KEY,
   EXPORT_SNAPSHOT_MESSAGE,
+  ExportDocumentFormat,
   ExportChatMessage,
   ExportCodeBlock,
   ExportNavigatorNode,
   ExportSnapshot,
   MATERIALS_LIST_MESSAGE,
   NavigatorSettings,
+  PAGE_COMMAND_MESSAGE,
   PAGE_STATUS_MESSAGE,
   PageAdapterHealth,
   PageMaterial,
+  ReadingToolPanel,
   SELECTION_GET_MESSAGE,
+  SelectiveExportSnapshot,
+  SelectiveExportPreferences,
   STORAGE_SETTINGS_KEY,
-  TOKEN_COUNT_BATCH_MESSAGE,
-  TokenCountBatchResponse,
   SelectionMaterial,
   isLegacyConversationRecord,
+  normalizeSelectiveExportPreferences,
   normalizeSettings
 } from "./shared";
 import { getTranslation } from "./i18n";
-import { approximateTokenCount } from "./tokenApprox";
 import {
+  buildConversationStorageKey,
   buildConversationSessionId,
-  hasConversationPromptOverlap,
-  isCurrentTokenSession
+  hasConversationPromptOverlap
 } from "./conversationSession";
 import {
   CanvasLayoutSession,
@@ -59,12 +81,27 @@ import {
   ChatGptAdapter,
   ChatGptDomRule,
   AdapterHealth,
+  CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR,
+  CHATGPT_COMPOSER_SELECTORS,
   CHATGPT_COMPAT_RULES_URL,
+  CHATGPT_HEADER_SELECTORS,
   CHATGPT_MESSAGE_NODE_SELECTOR,
+  CHATGPT_SIDEBAR_SELECTORS,
   CHATGPT_TURN_NODE_SELECTOR,
+  CHATGPT_USER_MESSAGE_NODE_SELECTOR,
   createChatGptAdapter,
   normalizeCompatRulesPayload
 } from "./chatGptAdapter";
+import {
+  applySelectiveExportPreferences,
+  buildSelectiveExportSnapshot,
+  canonicalizeCitationUrl,
+  filterSelectiveSnapshot,
+  getAllSelectableBlockIds,
+  ReadingMessageParseCache,
+  ReadingSourceMessage
+} from "./readingTools";
+import { buildExportDocument, downloadExportFile } from "./popup";
 import "./styles/content.css";
 
 const ROOT_ID = "conversation-navigator-root";
@@ -73,28 +110,25 @@ const MESSAGE_ROLE_ATTR = "data-cnav-message-role";
 const MESSAGE_ROLE_SELECTOR = `[${MESSAGE_ROLE_ATTR}]`;
 const CHATGPT_MESSAGE_OR_MARKER_SELECTOR = `${CHATGPT_MESSAGE_NODE_SELECTOR},${MESSAGE_ROLE_SELECTOR}`;
 const CHATGPT_TURN_OR_MARKER_SELECTOR = `${CHATGPT_TURN_NODE_SELECTOR},${MESSAGE_ROLE_SELECTOR}`;
-const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
+const CHATGPT_MESSAGE_STYLE_SELECTOR = `:is(${CHATGPT_MESSAGE_NODE_SELECTOR},${MESSAGE_ROLE_SELECTOR})`;
+const CHATGPT_USER_MESSAGE_STYLE_SELECTOR = `:is(${CHATGPT_USER_MESSAGE_NODE_SELECTOR},[${MESSAGE_ROLE_ATTR}="user"])`;
+const CHATGPT_ASSISTANT_MESSAGE_STYLE_SELECTOR = `:is(${CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR},[${MESSAGE_ROLE_ATTR}="assistant"])`;
 const COMPAT_RULES_STORAGE_KEY = "conversationNavigator:compatRules:v1";
 const SCAN_DEBOUNCE_MS = 650;
 const STREAMING_SCAN_DEBOUNCE_MS = 1400;
 const IDLE_SCAN_TIMEOUT_MS = 1200;
 const CHAT_STYLE_ID = "conversation-navigator-chat-style";
-const CHAT_STYLE_VERSION = "2026-07-v8-4-chatgpt-dom-compat";
+const CHAT_STYLE_VERSION = "2026-07-v10-reading-tools-v1";
 const TABLE_COPY_FORMAT_STORAGE_KEY = "conversationNavigator:tableCopyFormat:v1";
+const PAGE_COMMAND_EVENT = "conversation-navigator-page-command";
+const FOCUS_ACTIVE_ATTR = "data-cnav-focus-active";
+const FOCUS_HIDDEN_ATTR = "data-cnav-focus-hidden";
+const FOCUS_CHROME_ATTR = "data-cnav-focus-chrome";
+const CITATION_HIGHLIGHT_ATTR = "data-cnav-citation-highlight";
 const OFFICIAL_THREAD_WIDTH = 60;
 const THREAD_WIDTH_MIN = 60;
 const THREAD_WIDTH_MAX = 100;
-const DEFAULT_TOKEN_BUDGET = 128000;
-const TOKEN_CACHE_LIMIT = 900;
-const TOKENIZER_TEXT_LIMIT = 12000;
-const TOKEN_BATCH_MAX_ITEMS = 128;
-const TOKEN_BATCH_MAX_BYTES = 512 * 1024;
-const TOKEN_COUNTS_UPDATED_EVENT = "conversation-navigator-token-counts-updated";
-const TOKEN_BREAKDOWN_NODE_LIMIT = 80;
-const MODEL_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const COMPAT_RULES_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_HUD_WIDTH = 246;
-const DEFAULT_HUD_GAP = 26;
 const TEXT_CONTROL_SELECTOR = [
   "button",
   '[role="button"]',
@@ -124,7 +158,6 @@ const TEXT_IGNORED_CONTAINER_SELECTOR = [
 
 type Role = "user" | "assistant";
 type ColorTheme = "light" | "dark";
-type HeatLevel = 0 | 1 | 2 | 3;
 type NavigatorGroupKind =
   | "requirements"
   | "code"
@@ -145,22 +178,12 @@ interface SupplementalContext {
   text: string;
 }
 
-interface TokenBreakdown {
-  total: number;
-  code: number;
-  table: number;
-}
-
 interface NavigatorItem {
   id: string;
   promptPreview: string;
   answerSummary: string;
   turnIndex: number;
   domOrder: number;
-  promptTokens: number;
-  answerTokens: number;
-  totalTokens: number;
-  heatLevel: HeatLevel;
   mounted: boolean;
 }
 
@@ -169,20 +192,14 @@ interface NavigatorGroup {
   kind: NavigatorGroupKind;
   label: string;
   items: NavigatorItem[];
-  tokenTotal: number;
-  heatLevel: HeatLevel;
 }
 
 interface MessageMapEntry {
   id: string;
   role: Role;
-  tokenCount: number;
-  codeTokens: number;
-  tableTokens: number;
   text: string;
   turnIndex: number;
   domOrder: number;
-  heatLevel: HeatLevel;
   mounted: boolean;
 }
 
@@ -190,51 +207,6 @@ interface BuildNavigatorResult {
   items: NavigatorItem[];
   mapEntries: MessageMapEntry[];
   health: AdapterHealth;
-}
-
-interface TokenStats {
-  total: number;
-  viewport: number;
-  user: number;
-  assistant: number;
-  code: number;
-  table: number;
-  budget: number;
-  budgetSource: "model" | "manual";
-  budgetLabel: string;
-  modelLabel: string;
-  hotMessages: number;
-}
-
-interface TokenDetailEntry {
-  id: string;
-  role: Role;
-  label: string;
-  tokenCount: number;
-  codeTokens: number;
-  tableTokens: number;
-  turnIndex: number;
-  heatLevel: HeatLevel;
-}
-
-interface ViewportMetrics {
-  tokenCount: number;
-  visibleIds: Set<string>;
-  topRatio: number;
-  heightRatio: number;
-}
-
-interface ModelBudgetEntry {
-  id: string;
-  label: string;
-  budget: number;
-  source: "built-in" | "openai";
-  aliases: string[];
-}
-
-interface StoredModelCatalog {
-  updatedAt: number;
-  models: ModelBudgetEntry[];
 }
 
 interface StoredCompatRules {
@@ -278,77 +250,9 @@ function areResizeFramesEqual(first: ResizeFrame | null, second: ResizeFrame | n
 
 const anchorRegistry = new Map<string, HTMLElement>();
 const nodeAnchorRegistry = new WeakMap<HTMLElement, string>();
-const tokenCountCache = new Map<string, number>();
-const tokenKeyQueue: string[] = [];
 let nextNodeAnchorIndex = 1;
-const pendingTokenCountRequests = new Map<string, { text: string; sessionId: string }>();
-const tokenCountRequestsInFlight = new Set<string>();
-let tokenBatchTimer = 0;
-let tokenBatchRunning = false;
 const tabSessionId = Math.random().toString(36).slice(2, 10);
-let activeTokenSessionId = "";
-
-const BUILT_IN_MODEL_BUDGETS: ModelBudgetEntry[] = [
-  {
-    id: "chatgpt-auto",
-    label: "自动识别当前模型",
-    budget: DEFAULT_TOKEN_BUDGET,
-    source: "built-in",
-    aliases: ["auto", "current model", "chatgpt"]
-  },
-  {
-    id: "gpt-5.5-instant",
-    label: "GPT-5.5 Instant",
-    budget: 32000,
-    source: "built-in",
-    aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant", "fast"]
-  },
-  {
-    id: "gpt-5.5-thinking",
-    label: "GPT-5.5 Thinking",
-    budget: 256000,
-    source: "built-in",
-    aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking", "reasoning"]
-  },
-  {
-    id: "gpt-5.5-pro",
-    label: "GPT-5.5 Pro",
-    budget: 400000,
-    source: "built-in",
-    aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro", "pro"]
-  }
-];
-
-const OPENAI_MODEL_SYNC_URLS = [
-  "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
-  "https://help.openai.com/en/articles/11909943-gpt-53-and-gpt-55-in-chatgpt",
-  "https://help.openai.com/en/articles/6825453-chatgpt-release-notes",
-  "https://developers.openai.com/api/docs/models",
-  "https://openai.com/index/gpt-5-5-instant/",
-  "https://openai.com/index/introducing-gpt-5-5/",
-  "https://platform.openai.com/docs/deprecations",
-  "https://platform.openai.com/docs/models"
-];
-
-const RETIRED_CHATGPT_MODEL_IDS = new Set([
-  "gpt-3.5",
-  "gpt-4",
-  "gpt-4-turbo",
-  "gpt-4o",
-  "gpt-4.1",
-  "gpt-5",
-  "gpt-5-chat",
-  "gpt-5.1",
-  "gpt-5.2",
-  "o-series",
-  "o1",
-  "o3",
-  "o4",
-  "o4-mini"
-]);
-
-const NON_CHATGPT_MODEL_PATTERN = /(audio|realtime|transcribe|tts|image|vision|sora|embedding|moderation|codex|computer-use|deep-research|search|davinci|babbage|whisper|dall)/i;
-const MODEL_MODE_ORDER = ["instant", "thinking", "pro", "base"];
+let activeConversationSessionId = "";
 
 let activeCompatRules: ChatGptDomRule[] = [];
 let activeCompatRulesSource: CompatRulesSource = "built-in";
@@ -413,7 +317,21 @@ function createConversationSessionId(generation: number): string {
 }
 
 function getPageId(): string {
-  return activeTokenSessionId || createConversationSessionId(0);
+  return activeConversationSessionId || createConversationSessionId(0);
+}
+
+function getCitationStorageKey(): string {
+  return buildConversationStorageKey(location.hostname, getChatGptConversationId(), tabSessionId);
+}
+
+interface StoredCitationConversation {
+  updatedAt: number;
+  citations: Record<string, Partial<CitationRecord>>;
+}
+
+interface StoredCitationState {
+  schemaVersion: 1;
+  conversations: Record<string, StoredCitationConversation>;
 }
 
 let extensionStorageUnavailableWarned = false;
@@ -507,6 +425,63 @@ function saveSettings(settings: NavigatorSettings): Promise<boolean> {
   return storageSet({ [STORAGE_SETTINGS_KEY]: normalizeSettings(settings) });
 }
 
+async function loadSelectiveExportPreferences(): Promise<SelectiveExportPreferences> {
+  return normalizeSelectiveExportPreferences(
+    await storageGet<SelectiveExportPreferences>(EXPORT_PREFERENCES_STORAGE_KEY)
+  );
+}
+
+function saveSelectiveExportPreferences(preferences: SelectiveExportPreferences): Promise<boolean> {
+  return storageSet({
+    [EXPORT_PREFERENCES_STORAGE_KEY]: normalizeSelectiveExportPreferences(preferences)
+  });
+}
+
+function normalizeStoredCitationState(value: unknown): StoredCitationState {
+  if (!value || typeof value !== "object") {
+    return { schemaVersion: 1, conversations: {} };
+  }
+  const candidate = value as Partial<StoredCitationState>;
+  return {
+    schemaVersion: 1,
+    conversations: candidate.conversations && typeof candidate.conversations === "object"
+      ? candidate.conversations
+      : {}
+  };
+}
+
+async function readCitationConversation(pageKey: string): Promise<Record<string, Partial<CitationRecord>>> {
+  const stored = normalizeStoredCitationState(await storageGet<StoredCitationState>(CITATION_STATE_STORAGE_KEY));
+  return stored.conversations[pageKey]?.citations ?? {};
+}
+
+async function writeCitationConversation(
+  pageKey: string,
+  citations: Record<string, Partial<CitationRecord>>
+): Promise<void> {
+  const stored = normalizeStoredCitationState(await storageGet<StoredCitationState>(CITATION_STATE_STORAGE_KEY));
+  stored.conversations[pageKey] = { updatedAt: Date.now(), citations };
+  const conversations = Object.entries(stored.conversations)
+    .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
+    .slice(0, 50);
+  let remaining = 500;
+  const compacted: StoredCitationState["conversations"] = {};
+  for (const [key, conversation] of conversations) {
+    if (remaining <= 0) break;
+    const entries = Object.entries(conversation.citations)
+      .sort(([, a], [, b]) =>
+        Math.max(Number(b.checkedAt || 0), Number(b.openedAt || 0)) -
+        Math.max(Number(a.checkedAt || 0), Number(a.openedAt || 0))
+      )
+      .slice(0, remaining);
+    remaining -= entries.length;
+    compacted[key] = { ...conversation, citations: Object.fromEntries(entries) };
+  }
+  await storageSet({
+    [CITATION_STATE_STORAGE_KEY]: { schemaVersion: 1, conversations: compacted } satisfies StoredCitationState
+  });
+}
+
 function clearLegacyPageStorageRecords(): number {
   const keys: string[] = [];
   try {
@@ -541,6 +516,12 @@ function clearLegacyPageStorageRecords(): number {
 clearLegacyPageStorageRecords();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === PAGE_COMMAND_MESSAGE) {
+    window.dispatchEvent(new CustomEvent(PAGE_COMMAND_EVENT, { detail: message }));
+    sendResponse({ ok: true });
+    return false;
+  }
+
   const supportedMessageTypes = new Set([
     MATERIALS_LIST_MESSAGE,
     SELECTION_GET_MESSAGE,
@@ -617,52 +598,52 @@ function installChatTypographyStyle() {
       --thread-content-width: var(--cnav-thread-width) !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
+    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(${CHATGPT_MESSAGE_STYLE_SELECTOR}) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="max-w-"], [class*="thread-content"], [class*="conversation-turn"]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
+    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="max-w-"], [class*="thread-content"], [class*="conversation-turn"]):has(${CHATGPT_MESSAGE_STYLE_SELECTOR}) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(:is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) > :is(div, section) {
+    html[data-cnav-wide-thread="true"] main :is(article[data-testid*="conversation-turn" i], [data-testid*="conversation-turn" i], [data-turn-id], [data-message-id], [data-cnav-message-role]):has(${CHATGPT_MESSAGE_STYLE_SELECTOR}) > :is(div, section) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="thread-content"]):has(> :is([data-message-author-role], [data-author-role], [data-author="user"], [data-author="assistant"], [data-role="user"], [data-role="assistant"], [data-turn="user"], [data-turn="assistant"], [data-cnav-message-role])) {
+    html[data-cnav-wide-thread="true"] main :is(.mx-auto, [class*="thread-content"]):has(> ${CHATGPT_MESSAGE_STYLE_SELECTOR}) {
       max-width: var(--cnav-thread-width) !important;
       width: min(var(--cnav-thread-width), 100%) !important;
       margin-left: auto !important;
       margin-right: auto !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) {
+    html[data-cnav-wide-thread="true"] main ${CHATGPT_MESSAGE_STYLE_SELECTOR} {
       max-width: 100% !important;
       width: 100% !important;
       min-width: 0 !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) > :is(div, section) {
+    html[data-cnav-wide-thread="true"] main ${CHATGPT_MESSAGE_STYLE_SELECTOR} > :is(div, section) {
       max-width: 100% !important;
       width: 100% !important;
       min-width: 0 !important;
     }
 
-    html[data-cnav-wide-thread="true"] main :is([data-message-author-role="assistant"], [data-cnav-message-role="assistant"]) :is(.markdown, .whitespace-pre-wrap) {
+    html[data-cnav-wide-thread="true"] main ${CHATGPT_ASSISTANT_MESSAGE_STYLE_SELECTOR} :is(.markdown, .whitespace-pre-wrap) {
       width: 100% !important;
       max-width: 100% !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) {
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} {
       font-size: var(--cnav-chat-font-size, 1rem) !important;
       letter-spacing: var(--cnav-chat-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-line-height, 1.55) !important;
@@ -670,50 +651,50 @@ function installChatTypographyStyle() {
       word-break: normal !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
-      font-size: inherit !important;
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} :where(.markdown, .prose, .whitespace-pre-wrap, .break-words, [data-start], p, li, span, strong, em, blockquote) {
+      font-size: var(--cnav-chat-font-size, 1rem) !important;
       letter-spacing: var(--cnav-chat-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-line-height, 1.55) !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} :where(.markdown p, .prose p, .markdown li, .prose li, p, li) {
       margin-top: var(--cnav-chat-paragraph-gap, 0.44em) !important;
       margin-bottom: var(--cnav-chat-paragraph-gap, 0.44em) !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} :where(.markdown p:first-child, .prose p:first-child, p:first-child) {
       margin-top: 0 !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} :where(.markdown p:last-child, .prose p:last-child, p:last-child) {
       margin-bottom: 0 !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]) :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} :where(.markdown code, .markdown pre, .prose code, .prose pre, code, pre) {
       font-size: var(--cnav-chat-code-size, 0.94rem) !important;
       letter-spacing: var(--cnav-chat-code-letter-spacing, 0px) !important;
       line-height: var(--cnav-chat-code-line-height, 1.46) !important;
     }
 
-    main :is([data-message-author-role], [data-cnav-message-role]),
-    main :is([data-message-author-role], [data-cnav-message-role]) *,
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR},
+    main ${CHATGPT_MESSAGE_STYLE_SELECTOR} *,
     [data-cnav-canvas-kind="document"],
     [data-cnav-canvas-kind="document"] *,
-    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]),
-    html[data-cnav-wide-thread="true"] main :is([data-message-author-role], [data-cnav-message-role]) *,
+    html[data-cnav-wide-thread="true"] main ${CHATGPT_MESSAGE_STYLE_SELECTOR},
+    html[data-cnav-wide-thread="true"] main ${CHATGPT_MESSAGE_STYLE_SELECTOR} *,
     html[data-cnav-wide-canvas="true"] [data-cnav-canvas-width-target="true"] {
       animation: none !important;
       scroll-behavior: auto !important;
       transition: none !important;
     }
 
-    main :is([data-message-author-role="user"], [data-cnav-message-role="user"]) :is(.whitespace-pre-wrap, .break-words) {
+    main ${CHATGPT_USER_MESSAGE_STYLE_SELECTOR} :is(.whitespace-pre-wrap, .break-words) {
       max-width: min(760px, 72vw) !important;
       overflow-wrap: anywhere !important;
       word-break: normal !important;
     }
 
-    main :is([data-message-author-role="user"], [data-cnav-message-role="user"]) :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
+    main ${CHATGPT_USER_MESSAGE_STYLE_SELECTOR} :is(.whitespace-pre-wrap, .break-words):has(> :nth-child(8)) {
       max-height: 46vh;
       overflow-y: auto;
     }
@@ -1395,185 +1376,6 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function rememberTokenCount(cacheKey: string, count: number) {
-  tokenCountCache.set(cacheKey, count);
-  tokenKeyQueue.push(cacheKey);
-  while (tokenKeyQueue.length > TOKEN_CACHE_LIMIT) {
-    const staleKey = tokenKeyQueue.shift();
-    if (staleKey) {
-      tokenCountCache.delete(staleKey);
-    }
-  }
-}
-
-function scheduleTokenCountBatch() {
-  if (tokenBatchTimer || tokenBatchRunning || pendingTokenCountRequests.size === 0) {
-    return;
-  }
-
-  tokenBatchTimer = window.setTimeout(() => {
-    tokenBatchTimer = 0;
-    void flushTokenCountBatch();
-  }, 40);
-}
-
-async function flushTokenCountBatch() {
-  if (tokenBatchRunning || pendingTokenCountRequests.size === 0) {
-    return;
-  }
-
-  const items: Array<{ id: string; text: string }> = [];
-  let payloadBytes = 0;
-  const firstPending = pendingTokenCountRequests.values().next().value as
-    | { text: string; sessionId: string }
-    | undefined;
-  const sessionId = firstPending?.sessionId ?? activeTokenSessionId;
-  for (const [id, pending] of pendingTokenCountRequests) {
-    if (pending.sessionId !== sessionId) {
-      continue;
-    }
-
-    const text = pending.text;
-    const nextBytes = (id.length + text.length) * 2;
-    if (items.length >= TOKEN_BATCH_MAX_ITEMS || payloadBytes + nextBytes > TOKEN_BATCH_MAX_BYTES) {
-      break;
-    }
-
-    pendingTokenCountRequests.delete(id);
-    tokenCountRequestsInFlight.add(id);
-    payloadBytes += nextBytes;
-    items.push({ id, text });
-  }
-
-  if (items.length === 0) {
-    return;
-  }
-
-  tokenBatchRunning = true;
-  try {
-    const response = await new Promise<TokenCountBatchResponse | undefined>((resolve) => {
-      try {
-        chrome.runtime.sendMessage(
-          { type: TOKEN_COUNT_BATCH_MESSAGE, sessionId, items },
-          (result?: TokenCountBatchResponse) => {
-            if (chrome.runtime.lastError) {
-              resolve(undefined);
-              return;
-            }
-            resolve(result);
-          }
-        );
-      } catch {
-        resolve(undefined);
-      }
-    });
-
-    let changed = false;
-    if (response?.ok && Array.isArray(response.counts)) {
-      for (const result of response.counts) {
-        if (!Number.isFinite(result.count) || result.count < 0) {
-          continue;
-        }
-        rememberTokenCount(result.id, Math.round(result.count));
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      window.dispatchEvent(new CustomEvent(TOKEN_COUNTS_UPDATED_EVENT, {
-        detail: { sessionId: response?.sessionId ?? sessionId }
-      }));
-    }
-  } finally {
-    for (const item of items) {
-      tokenCountRequestsInFlight.delete(item.id);
-    }
-    tokenBatchRunning = false;
-    scheduleTokenCountBatch();
-  }
-}
-
-function countTokens(text: string, cacheSeed: string): number {
-  const normalized = normalizeText(text);
-  if (!normalized) {
-    return 0;
-  }
-
-  const cacheKey = `${cacheSeed}:${stableHash(normalized)}`;
-  const cached = tokenCountCache.get(cacheKey);
-  if (typeof cached === "number") {
-    return cached;
-  }
-
-  const count = approximateTokenCount(normalized);
-  rememberTokenCount(cacheKey, count);
-
-  if (
-    normalized.length <= TOKENIZER_TEXT_LIMIT &&
-    !pendingTokenCountRequests.has(cacheKey) &&
-    !tokenCountRequestsInFlight.has(cacheKey)
-  ) {
-    pendingTokenCountRequests.set(cacheKey, {
-      text: normalized,
-      sessionId: activeTokenSessionId
-    });
-    scheduleTokenCountBatch();
-  }
-
-  return count;
-}
-
-function sumDescendantTokens(element: HTMLElement, selector: string, seed: string): number {
-  const seen = new Set<string>();
-  let total = 0;
-  let nodeCount = 0;
-
-  for (const child of safeQueryAll(selector, element)) {
-    if (nodeCount >= TOKEN_BREAKDOWN_NODE_LIMIT) {
-      break;
-    }
-
-    const text = extractVisibleText(child);
-    if (!text) {
-      continue;
-    }
-
-    nodeCount += 1;
-    const key = stableHash(text);
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    total += countTokens(text, `${seed}:${selector}:${seen.size}`);
-  }
-
-  return total;
-}
-
-function getTokenBreakdown(message: ParsedMessage, id: string): TokenBreakdown {
-  const total = countTokens(message.text, id);
-  const code = Math.min(total, sumDescendantTokens(message.element, "pre, code", `${id}:code`));
-  const table = Math.min(total, sumDescendantTokens(message.element, "table, [role='table']", `${id}:table`));
-  return { total, code, table };
-}
-
-function getHeatLevel(tokenCount: number, cumulativeTokens: number, budget: number): HeatLevel {
-  if (tokenCount >= 8000 || cumulativeTokens > budget) {
-    return 3;
-  }
-
-  if (tokenCount >= 3000 || cumulativeTokens > budget * 0.82) {
-    return 2;
-  }
-
-  if (tokenCount >= 1200 || cumulativeTokens > budget * 0.62) {
-    return 1;
-  }
-
-  return 0;
-}
-
 function getNativeMessageKey(element: HTMLElement): string | null {
   const candidates: HTMLElement[] = [];
   const addCandidate = (candidate: HTMLElement | null) => {
@@ -1852,8 +1654,6 @@ function buildNavigatorGroups(items: NavigatorItem[], language: AppLanguage): Na
     const previous = groups[groups.length - 1];
     if (previous && previous.kind === kind) {
       previous.items.push(item);
-      previous.tokenTotal += item.totalTokens;
-      previous.heatLevel = Math.max(previous.heatLevel, item.heatLevel) as HeatLevel;
       continue;
     }
 
@@ -1861,9 +1661,7 @@ function buildNavigatorGroups(items: NavigatorItem[], language: AppLanguage): Na
       id: `${kind}-${stableHash(item.id).slice(0, 8)}`,
       kind,
       label: getNavigatorGroupLabel(kind, language),
-      items: [item],
-      tokenTotal: item.totalTokens,
-      heatLevel: item.heatLevel
+      items: [item]
     });
   }
 
@@ -1893,7 +1691,7 @@ function isContextCoveredByMessage(context: SupplementalContext, messages: Parse
   });
 }
 
-function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorResult {
+function buildNavigatorData(): BuildNavigatorResult {
   const adapter = getAdapter();
   const collection = adapter.collect();
   const contextMessages: ParsedMessage[] = collection.supplementalContexts
@@ -1908,48 +1706,37 @@ function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorR
   const mapEntries: MessageMapEntry[] = [];
   const messageIds: string[] = [];
   const messageDomOrders: number[] = [];
-  const tokenBreakdowns: TokenBreakdown[] = [];
   anchorRegistry.clear();
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     markMessageRole(message.element, message.role);
     const id = getStableAnchorId(message);
-    const tokenBreakdown = getTokenBreakdown(message, id);
     const domOrder = getMessageDomOrder(message, index);
 
     messageIds.push(id);
     messageDomOrders.push(domOrder);
-    tokenBreakdowns.push(tokenBreakdown);
     anchorRegistry.set(id, getMessageAnchorElement(message.element));
   }
 
-  let cumulativeTokens = 0;
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     const id = messageIds[index];
     const domOrder = messageDomOrders[index] ?? index;
-    const tokenBreakdown = tokenBreakdowns[index];
-    cumulativeTokens += tokenBreakdown.total;
 
     if (message.role !== "user") {
       mapEntries.push({
         id,
         role: message.role,
-        tokenCount: tokenBreakdown.total,
-        codeTokens: tokenBreakdown.code,
-        tableTokens: tokenBreakdown.table,
         text: message.text,
         turnIndex: Math.max(1, items.length),
         domOrder,
-        heatLevel: getHeatLevel(tokenBreakdown.total, cumulativeTokens, tokenBudget),
         mounted: true
       });
       continue;
     }
 
     const answerParts: string[] = [];
-    let answerTokens = 0;
     for (let nextIndex = index + 1; nextIndex < messages.length; nextIndex += 1) {
       const nextMessage = messages[nextIndex];
       if (nextMessage.role === "user") {
@@ -1957,11 +1744,7 @@ function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorR
       }
 
       answerParts.push(nextMessage.text);
-      answerTokens += tokenBreakdowns[nextIndex]?.total ?? 0;
     }
-
-    const totalTokens = tokenBreakdown.total + answerTokens;
-    const heatLevel = getHeatLevel(totalTokens, cumulativeTokens + answerTokens, tokenBudget);
 
     items.push({
       id,
@@ -1969,23 +1752,15 @@ function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorR
       answerSummary: summarizeAnswer(answerParts.join("\n\n")),
       turnIndex: items.length + 1,
       domOrder,
-      promptTokens: tokenBreakdown.total,
-      answerTokens,
-      totalTokens,
-      heatLevel,
       mounted: true
     });
 
     mapEntries.push({
       id,
       role: message.role,
-      tokenCount: tokenBreakdown.total,
-      codeTokens: tokenBreakdown.code,
-      tableTokens: tokenBreakdown.table,
       text: message.text,
       turnIndex: items.length,
       domOrder,
-      heatLevel,
       mounted: true
     });
   }
@@ -1995,8 +1770,7 @@ function buildNavigatorData(tokenBudget = DEFAULT_TOKEN_BUDGET): BuildNavigatorR
     mapEntries,
     health: {
       ...collection.health,
-      canAnchor: anchorRegistry.size > 0,
-      tokenTextAvailable: mapEntries.some((entry) => entry.tokenCount > 0)
+      canAnchor: anchorRegistry.size > 0
     }
   };
 }
@@ -2005,9 +1779,7 @@ function getNavigatorItemKey(item: NavigatorItem): string {
   return stableHash(
     [
       normalizeText(item.promptPreview).toLowerCase(),
-      normalizeText(item.answerSummary).toLowerCase(),
-      Math.round(item.promptTokens / 8),
-      Math.round(item.answerTokens / 8)
+      normalizeText(item.answerSummary).toLowerCase()
     ].join("|")
   );
 }
@@ -2016,8 +1788,7 @@ function getMapEntryKey(entry: MessageMapEntry): string {
   return stableHash(
     [
       entry.role,
-      normalizeText(entry.text).toLowerCase(),
-      Math.round(entry.tokenCount / 8)
+      normalizeText(entry.text).toLowerCase()
     ].join("|")
   );
 }
@@ -2425,6 +2196,12 @@ function getCurrentConversationScrollTop(): number {
   return getContainerScrollTop(getPrimaryConversationScrollContainer());
 }
 
+function setCurrentConversationScrollTop(top: number) {
+  const scrollContainer = getPrimaryConversationScrollContainer();
+  if (scrollContainer === window) window.scrollTo({ top, behavior: "auto" });
+  else (scrollContainer as HTMLElement).scrollTo({ top, behavior: "auto" });
+}
+
 function isElementVisibleInContainer(element: HTMLElement, scrollContainer: HTMLElement | Window): boolean {
   const rect = element.getBoundingClientRect();
   const viewport = getContainerViewportRect(scrollContainer);
@@ -2673,7 +2450,7 @@ function createExportCodeBlocks(): ExportCodeBlock[] {
 function createExportNodes(): ExportNavigatorNode[] {
   const stateItems = latestNavigatorExportState.items.length
     ? latestNavigatorExportState.items
-    : buildNavigatorData(DEFAULT_TOKEN_BUDGET).items;
+    : buildNavigatorData().items;
   const groups = buildNavigatorGroups(stateItems, latestNavigatorExportState.language);
   const groupByItemId = new Map<string, string>();
   for (const group of groups) {
@@ -2688,10 +2465,7 @@ function createExportNodes(): ExportNavigatorNode[] {
     promptPreview: item.promptPreview,
     answerSummary: item.answerSummary,
     groupLabel: groupByItemId.get(item.id) ?? getNavigatorGroupLabel(inferNavigatorGroupKind(item), latestNavigatorExportState.language),
-    turnIndex: item.turnIndex,
-    promptTokens: item.promptTokens,
-    answerTokens: item.answerTokens,
-    totalTokens: item.totalTokens
+    turnIndex: item.turnIndex
   }));
 }
 
@@ -2706,18 +2480,6 @@ function createExportSnapshot(): ExportSnapshot {
     codeBlocks: createExportCodeBlocks(),
     nodes: createExportNodes()
   };
-}
-
-function formatTokenCount(value: number): string {
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`;
-  }
-
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
-  }
-
-  return String(value);
 }
 
 type TableCopyFormat = "markdown" | "tsv" | "csv" | "html";
@@ -3208,7 +2970,7 @@ function getFloatingAvoidRects(navigatorCollapsed: boolean): DOMRect[] {
   const rects: DOMRect[] = [];
   void navigatorCollapsed;
 
-  for (const handle of safeQueryAll(`#${ROOT_ID} .cnav-thread-handle`)) {
+  for (const handle of safeQueryAll(`#${ROOT_ID} :is(.cnav-thread-handle,.cnav-reading-actions)`)) {
     const rect = handle.getBoundingClientRect();
     if (isRectVisible(rect)) {
       rects.push(rect);
@@ -3466,7 +3228,7 @@ function getTableCopyOverlay(
 function getDefaultScrollJumpPosition(): FloatingControlPosition {
   return window.innerWidth <= 760
     ? { right: 12, bottom: 82 }
-    : { right: 56, bottom: 30 };
+    : { right: 22, bottom: 82 };
 }
 
 function getScrollJumpPosition(navigatorCollapsed: boolean): FloatingControlPosition {
@@ -5019,284 +4781,6 @@ function CodeBlockLayer({
   );
 }
 
-function normalizeDetectedChatGptModelLabel(value: string): string {
-  const text = normalizeText(value)
-    .replace(/\b(model|mode|当前模型|模型)\b\s*[:：]?\s*/gi, "")
-    .trim();
-  const lower = text.toLowerCase();
-
-  if (!text || text.length > 72 || /token|预算|local estimate|copy|share|settings|导航器|navigator/i.test(text)) {
-    return "";
-  }
-
-  const explicit = text.match(/\bGPT\s*[- ]?\s*(\d+(?:\.\d+)?)(?:\s*[- ]?\s*(instant|thinking|pro))?\b/i);
-  if (explicit) {
-    const version = explicit[1];
-    const mode = explicit[2]?.toLowerCase();
-    if (mode === "instant") {
-      return `GPT-${version} Instant`;
-    }
-    if (mode === "thinking") {
-      return `GPT-${version} Thinking`;
-    }
-    if (mode === "pro") {
-      return `GPT-${version} Pro`;
-    }
-    return `GPT-${version}`;
-  }
-
-  if (/^(instant|fast)$/i.test(text) || /\binstant\b/.test(lower)) {
-    return "GPT-5.5 Instant";
-  }
-
-  if (/^(thinking|reasoning)$/i.test(text) || /\bthinking\b/.test(lower)) {
-    return "GPT-5.5 Thinking";
-  }
-
-  if (/^pro$/i.test(text) || /\bgpt\b.*\bpro\b/i.test(text)) {
-    return "GPT-5.5 Pro";
-  }
-
-  return "";
-}
-
-function scoreModelCandidate(element: HTMLElement, normalizedLabel: string, rawText: string): number {
-  let score = 0;
-  const testId = element.getAttribute("data-testid") || "";
-  const ariaLabel = element.getAttribute("aria-label") || "";
-  const text = normalizeText(rawText);
-
-  if (/model|gpt/i.test(testId) || /model|gpt/i.test(ariaLabel)) {
-    score += 40;
-  }
-  if (/^(Instant|Thinking|Pro)$/i.test(text)) {
-    score += 34;
-  }
-  if (/GPT[- ]?\d/i.test(text)) {
-    score += 30;
-  }
-  if (element.closest("form, main")) {
-    score += 12;
-  }
-  if (element.matches("button, [role='button']")) {
-    score += 8;
-  }
-  if (/Thinking|Pro/.test(normalizedLabel)) {
-    score += 6;
-  }
-
-  return score - Math.max(0, text.length - 32);
-}
-
-function detectModelLabel(): string {
-  try {
-    return getAdapter().detectModelLabel();
-  } catch {
-    return "";
-  }
-}
-
-function parseBudgetText(value: string): number | null {
-  const normalized = value.replace(/,/g, "").trim().toLowerCase();
-  const million = normalized.match(/^(\d+(?:\.\d+)?)\s*m$/);
-  if (million) {
-    return Math.round(Number(million[1]) * 1000000);
-  }
-
-  const thousand = normalized.match(/^(\d+(?:\.\d+)?)\s*k$/);
-  if (thousand) {
-    return Math.round(Number(thousand[1]) * 1000);
-  }
-
-  const numeric = Number(normalized);
-  return Number.isFinite(numeric) && numeric >= 8000 ? Math.round(numeric) : null;
-}
-
-function normalizeModelId(value: string): string | null {
-  const modelMatch = value
-    .replace(/\bGPT\s*[- ]?\s*(\d)/gi, "gpt-$1")
-    .match(/\b(?:gpt|o)[a-z0-9_.-]*(?:[\s_-]+(?:mini|nano|pro|chat|thinking|instant|codex|max|audio|realtime))*\b/i);
-
-  if (!modelMatch?.[0]) {
-    return null;
-  }
-
-  const id = modelMatch[0]
-    .toLowerCase()
-    .replace(/_/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/--+/g, "-")
-    .replace(/^-|-$/g, "");
-
-  return /^(?:gpt|o)[a-z0-9]/.test(id) ? id : null;
-}
-
-function formatModelLabelFromId(id: string): string {
-  return id
-    .replace(/^gpt-/, "GPT-")
-    .replace(/\bmini\b/g, "Mini")
-    .replace(/\bnano\b/g, "Nano")
-    .replace(/\bpro\b/g, "Pro")
-    .replace(/\bchat\b/g, "Chat")
-    .replace(/\bthinking\b/g, "Thinking")
-    .replace(/\binstant\b/g, "Instant")
-    .replace(/\bcodex\b/g, "Codex")
-    .replace(/\bmax\b/g, "Max")
-    .replace(/\baudio\b/g, "Audio")
-    .replace(/\brealtime\b/g, "Realtime");
-}
-
-function makeModelAliases(id: string, label: string, aliases: string[] = []): string[] {
-  return Array.from(new Set([
-    id,
-    id.replace(/-/g, " "),
-    label,
-    label.toLowerCase(),
-    ...aliases
-  ].filter(Boolean)));
-}
-
-function defaultBudgetForModelId(id: string): number {
-  if (/\bpro\b/.test(id)) {
-    return 400000;
-  }
-  if (/\bthinking\b/.test(id)) {
-    return 256000;
-  }
-  if (/\binstant\b/.test(id)) {
-    return 32000;
-  }
-  return DEFAULT_TOKEN_BUDGET;
-}
-
-function createModelEntry(rawName: string, budget?: number | null, aliases: string[] = []): ModelBudgetEntry | null {
-  const id = normalizeModelId(rawName);
-  if (!id || !/^gpt-\d/.test(id) || NON_CHATGPT_MODEL_PATTERN.test(id)) {
-    return null;
-  }
-
-  const label = formatModelLabelFromId(id);
-  return {
-    id,
-    label,
-    budget: budget && budget >= 8000 ? Math.round(budget) : defaultBudgetForModelId(id),
-    source: "openai",
-    aliases: makeModelAliases(id, label, aliases)
-  };
-}
-
-function parseOnlineModelCatalog(text: string): ModelBudgetEntry[] {
-  try {
-    const parsed = JSON.parse(text) as { models?: Array<Partial<ModelBudgetEntry>> };
-    if (!Array.isArray(parsed.models)) {
-      return [];
-    }
-
-    const models: ModelBudgetEntry[] = [];
-    for (const model of parsed.models) {
-      const budget = Number(model.budget);
-      const aliases = Array.isArray(model.aliases)
-        ? model.aliases.map((alias) => String(alias))
-        : [];
-      const entry = createModelEntry(String(model.id || model.label || ""), budget, aliases);
-      if (!entry) {
-        continue;
-      }
-
-      models.push(entry);
-    }
-
-    return models;
-  } catch {
-    return [];
-  }
-}
-
-function cleanModelDocText(text: string): string {
-  return text
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function parseDynamicModelBudgetsFromDocs(text: string): ModelBudgetEntry[] {
-  const normalized = cleanModelDocText(text);
-  const models = new Map<string, ModelBudgetEntry>();
-  const budgetPattern = "((?:\\d{1,3},)*\\d{3,}|\\d+(?:\\.\\d+)?\\s*[mk])";
-
-  const addModel = (rawName: string, rawBudget: string) => {
-    const budget = parseBudgetText(rawBudget);
-    const entry = createModelEntry(rawName, budget);
-    if (!entry) {
-      return;
-    }
-
-    const existing = models.get(entry.id);
-    models.set(entry.id, {
-      ...entry,
-      budget: Math.max(existing?.budget ?? 0, entry.budget),
-      aliases: makeModelAliases(entry.id, entry.label, existing?.aliases)
-    });
-  };
-
-  for (const match of normalized.matchAll(new RegExp(`\\bModel ID\\s+([a-z0-9][a-z0-9_.-]*(?:-[a-z0-9_.-]+)*)[\\s\\S]{0,900}?\\bContext window\\s+${budgetPattern}`, "gi"))) {
-    addModel(match[1], match[2]);
-  }
-
-  for (const match of normalized.matchAll(new RegExp(`\\b((?:GPT|gpt|o)[A-Za-z0-9 ._-]{1,44}?)[\\s\\S]{0,900}?\\bContext window\\s+${budgetPattern}`, "gi"))) {
-    addModel(match[1], match[2]);
-  }
-
-  for (const match of normalized.matchAll(new RegExp(`\\b((?:GPT|gpt|o)[A-Za-z0-9 ._-]{1,44}?)[\\s\\S]{0,700}?${budgetPattern}\\s*(?:tokens?\\s*)?(?:context|context window)\\b`, "gi"))) {
-    addModel(match[1], match[2]);
-  }
-
-  return Array.from(models.values());
-}
-
-function parseCurrentChatGptModelsFromDocs(text: string): ModelBudgetEntry[] {
-  const normalized = cleanModelDocText(text);
-  const models = new Map<string, ModelBudgetEntry>();
-
-  for (const match of normalized.matchAll(/\bGPT\s*[- ]?\s*(\d+(?:\.\d+)?)(?:\s*[- ]?\s*(Instant|Thinking|Pro))?\b/gi)) {
-    const rawName = `gpt-${match[1]}${match[2] ? `-${match[2].toLowerCase()}` : ""}`;
-    const index = match.index ?? 0;
-    const context = normalized.slice(Math.max(0, index - 160), index + 260).toLowerCase();
-    if (/(retired|deprecated|deprecat|removed|legacy|sunset|淘汰|弃用)/i.test(context)) {
-      continue;
-    }
-
-    const entry = createModelEntry(rawName);
-    if (entry) {
-      models.set(entry.id, entry);
-    }
-  }
-
-  return Array.from(models.values());
-}
-
-function parseRetiredModelIdsFromDocs(text: string): Set<string> {
-  const normalized = cleanModelDocText(text);
-  const retiredIds = new Set<string>();
-
-  for (const match of normalized.matchAll(/\b(?:GPT\s*[- ]?\s*\d+(?:\.\d+)?(?:\s*[- ]?\s*(?:Instant|Thinking|Pro))?|gpt-[a-z0-9_.-]+|o\d(?:-mini)?)\b/gi)) {
-    const id = normalizeModelId(match[0]);
-    if (!id) {
-      continue;
-    }
-
-    const index = match.index ?? 0;
-    const context = normalized.slice(Math.max(0, index - 220), index + 340).toLowerCase();
-    if (/(retired|deprecated|deprecat|legacy|sunset|shut down|shutdown|removed|removal|replaced by|no longer available|淘汰|弃用)/i.test(context)) {
-      retiredIds.add(id);
-    }
-  }
-
-  return retiredIds;
-}
-
 function fetchTextFromBackground(url: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     if (typeof chrome === "undefined" || !chrome.runtime?.id) {
@@ -5335,319 +4819,534 @@ function fetchTextFromBackground(url: string, timeoutMs: number): Promise<string
   });
 }
 
-function canFallbackToPageFetch(url: string): boolean {
-  try {
-    return new URL(url).hostname === "raw.githubusercontent.com";
-  } catch {
-    return false;
-  }
-}
-
-async function fetchTextWithTimeout(url: string, timeoutMs = 8000): Promise<string> {
-  let backgroundError: unknown;
-  try {
-    return await fetchTextFromBackground(url, timeoutMs);
-  } catch (error) {
-    backgroundError = error;
-    // Fall back to page fetch for CORS-enabled endpoints such as raw GitHub.
-  }
-
-  if (!canFallbackToPageFetch(url)) {
-    throw backgroundError instanceof Error ? backgroundError : new Error("Background fetch failed");
-  }
-
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      cache: "no-store",
-      credentials: "omit",
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+function checkCitationsFromBackground(urls: string[]): Promise<CitationCheckResult[]> {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(
+        { type: CITATION_CHECK_MESSAGE, urls },
+        (response?: { ok?: boolean; results?: CitationCheckResult[]; error?: string }) => {
+          const runtimeErrorMessage = getRuntimeLastErrorMessage();
+          if (runtimeErrorMessage) {
+            reject(new Error(runtimeErrorMessage));
+            return;
+          }
+          if (response?.ok && Array.isArray(response.results)) {
+            resolve(response.results);
+            return;
+          }
+          reject(new Error(response?.error || "Citation check failed"));
+        }
+      );
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
     }
-
-    return await response.text();
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-function getModelVersion(model: ModelBudgetEntry): { major: number; minor: number } | null {
-  const match = model.id.match(/^gpt-(\d+)(?:\.(\d+))?/);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2] ?? 0)
-  };
-}
-
-function getModelLine(model: ModelBudgetEntry): string {
-  const match = model.id.match(/^gpt-\d+(?:\.\d+)?/);
-  return match?.[0] ?? model.id;
-}
-
-function getModelMode(model: ModelBudgetEntry): string {
-  const lower = `${model.id} ${model.label}`.toLowerCase();
-  if (/\binstant\b/.test(lower)) {
-    return "instant";
-  }
-  if (/\bthinking\b/.test(lower)) {
-    return "thinking";
-  }
-  if (/\bpro\b/.test(lower)) {
-    return "pro";
-  }
-  return "base";
-}
-
-function compareModelVersion(a: ModelBudgetEntry, b: ModelBudgetEntry): number {
-  const aVersion = getModelVersion(a);
-  const bVersion = getModelVersion(b);
-  if (!aVersion || !bVersion) {
-    return 0;
-  }
-
-  return aVersion.major === bVersion.major
-    ? aVersion.minor - bVersion.minor
-    : aVersion.major - bVersion.major;
-}
-
-function isCurrentChatGptModel(model: ModelBudgetEntry, retiredIds = RETIRED_CHATGPT_MODEL_IDS): boolean {
-  if (model.id === "chatgpt-auto") {
-    return true;
-  }
-
-  if (retiredIds.has(model.id) || NON_CHATGPT_MODEL_PATTERN.test(model.id)) {
-    return false;
-  }
-
-  return /^gpt-\d/.test(model.id);
-}
-
-function sortModelCatalog(models: ModelBudgetEntry[]): ModelBudgetEntry[] {
-  return [...models].sort((a, b) => {
-    if (a.id === "chatgpt-auto") {
-      return -1;
-    }
-    if (b.id === "chatgpt-auto") {
-      return 1;
-    }
-
-    const versionDiff = compareModelVersion(b, a);
-    if (versionDiff !== 0) {
-      return versionDiff;
-    }
-
-    const modeDiff = MODEL_MODE_ORDER.indexOf(getModelMode(a)) - MODEL_MODE_ORDER.indexOf(getModelMode(b));
-    if (modeDiff !== 0) {
-      return modeDiff;
-    }
-
-    return a.label.localeCompare(b.label);
   });
 }
 
-function curateModelCatalog(models: ModelBudgetEntry[], dynamicRetiredIds = new Set<string>()): ModelBudgetEntry[] {
-  const retiredIds = new Set([...RETIRED_CHATGPT_MODEL_IDS, ...dynamicRetiredIds]);
-  const byId = new Map<string, ModelBudgetEntry>();
-  for (const model of [...BUILT_IN_MODEL_BUDGETS, ...models]) {
-    if (!isCurrentChatGptModel(model, retiredIds)) {
-      continue;
-    }
-
-    const existing = byId.get(model.id);
-    byId.set(model.id, existing ? {
-      ...existing,
-      ...model,
-      aliases: makeModelAliases(model.id, model.label, [...existing.aliases, ...model.aliases])
-    } : {
-      ...model,
-      aliases: makeModelAliases(model.id, model.label, model.aliases)
-    });
-  }
-
-  const currentModels = Array.from(byId.values()).filter((model) => model.id !== "chatgpt-auto");
-  const latestVersion = currentModels.reduce<ModelBudgetEntry | null>((latest, model) => {
-    if (!latest) {
-      return model;
-    }
-    return compareModelVersion(model, latest) > 0 ? model : latest;
-  }, null);
-
-  if (latestVersion) {
-    const latestLine = getModelLine(latestVersion);
-    for (const model of currentModels) {
-      if (getModelLine(model) !== latestLine) {
-        byId.delete(model.id);
-      }
-    }
-  }
-
-  const modeCounts = new Map<string, number>();
-  for (const model of byId.values()) {
-    const mode = getModelMode(model);
-    modeCounts.set(mode, (modeCounts.get(mode) ?? 0) + 1);
-  }
-
-  for (const model of byId.values()) {
-    if (model.id === "chatgpt-auto") {
-      continue;
-    }
-    const mode = getModelMode(model);
-    if (mode === "base" && (modeCounts.get("instant") || modeCounts.get("thinking") || modeCounts.get("pro"))) {
-      byId.delete(model.id);
-    }
-  }
-
-  return sortModelCatalog(Array.from(byId.values())).slice(0, 7);
-}
-
-async function syncOpenAiModelCatalog(): Promise<ModelBudgetEntry[]> {
-  const pages = await Promise.allSettled(OPENAI_MODEL_SYNC_URLS.map((url) => fetchTextWithTimeout(url)));
-  const fetchedText = pages
-    .filter((result): result is PromiseFulfilledResult<string> => result.status === "fulfilled")
-    .map((result) => result.value);
-  const onlineModels = fetchedText.flatMap(parseOnlineModelCatalog);
-  const dynamicModels = fetchedText.flatMap(parseDynamicModelBudgetsFromDocs);
-  const currentChatGptModels = fetchedText.flatMap(parseCurrentChatGptModelsFromDocs);
-  const retiredIds = fetchedText.reduce((ids, text) => {
-    for (const id of parseRetiredModelIdsFromDocs(text)) {
-      ids.add(id);
-    }
-    return ids;
-  }, new Set<string>());
-  const joined = fetchedText.join("\n");
-
-  if (!joined && onlineModels.length === 0 && dynamicModels.length === 0 && currentChatGptModels.length === 0) {
-    throw new Error("No OpenAI model docs fetched");
-  }
-
-  return curateModelCatalog([...currentChatGptModels, ...dynamicModels, ...onlineModels], retiredIds);
-}
-
-function findModelBudget(modelCatalog: ModelBudgetEntry[], modelId: string): ModelBudgetEntry | undefined {
-  return modelCatalog.find((model) => model.id === modelId);
-}
-
-function detectModelBudget(modelCatalog: ModelBudgetEntry[], modelLabel: string): ModelBudgetEntry | undefined {
-  const label = modelLabel.toLowerCase();
-  if (!label) {
-    return undefined;
-  }
-
-  return modelCatalog
-    .filter((model) => model.id !== "chatgpt-auto")
-    .find((model) => model.aliases.some((alias) => label.includes(alias.toLowerCase())));
-}
-
-function getTokenBudget(
-  settings: NavigatorSettings,
-  modelLabel = detectModelLabel(),
-  modelCatalog = BUILT_IN_MODEL_BUDGETS
-) {
-  if (settings.tokenBudgetMode === "manual") {
+function getReadingToolsLabels(language: AppLanguage) {
+  if (language === "en") {
     return {
-      budget: settings.manualTokenBudget,
-      budgetSource: "manual" as const,
-      budgetLabel: `${formatTokenCount(settings.manualTokenBudget)}`
+      title: "Reading tools",
+      close: "Close reading tools",
+      focus: "Focus",
+      export: "Select export",
+      citations: "Sources",
+      enterFocus: "Enter focus mode",
+      exitFocus: "Exit focus mode",
+      focusDescription: "Keep the active question and answer in view.",
+      previous: "Previous",
+      next: "Next",
+      turn: "Turn",
+      progress: "Reading progress",
+      selectAll: "Select all",
+      clear: "Clear",
+      selected: "selected",
+      exportNow: "Export selected",
+      noContent: "No readable chat content was found.",
+      searchSources: "Search sources",
+      checkSources: "Check links",
+      checking: "Checking",
+      copySources: "Copy references",
+      groupDomain: "By domain",
+      groupMessage: "By message",
+      openSource: "Open source",
+      locate: "Locate",
+      sourceCoverage: "Visible source coverage",
+      needsReview: "Needs review",
+      permissionHint: "Enable optional website access in extension settings before checking links.",
+      unsafeHint: "Local, private, or unsupported source addresses are blocked for safety.",
+      opened: "Opened",
+      format: "Format",
+      selectUser: "User only",
+      selectAssistant: "GPT only",
+      preview: "Live preview",
+      exportOptions: "Export options",
+      includeSourceMeta: "Include source URL",
+      includeExportedAt: "Include export time",
+      filterShortMessages: "Filter short acknowledgements",
+      mergeAdjacentAnswers: "Merge adjacent GPT messages",
+      generateToc: "Generate contents"
     };
   }
-
-  const selectedModel =
-    settings.tokenModelId === "chatgpt-auto"
-      ? detectModelBudget(modelCatalog, modelLabel)
-      : findModelBudget(modelCatalog, settings.tokenModelId) ?? detectModelBudget(modelCatalog, modelLabel);
-  const budget = selectedModel?.budget ?? DEFAULT_TOKEN_BUDGET;
+  if (language === "zh-TW") {
+    return {
+      title: "閱讀工具",
+      close: "關閉閱讀工具",
+      focus: "專注閱讀",
+      export: "選擇匯出",
+      citations: "引用管理",
+      enterFocus: "進入專注閱讀",
+      exitFocus: "退出專注閱讀",
+      focusDescription: "只保留目前一輪問題與回答。",
+      previous: "上一輪",
+      next: "下一輪",
+      turn: "第",
+      progress: "閱讀進度",
+      selectAll: "全部選取",
+      clear: "清空",
+      selected: "已選",
+      exportNow: "匯出已選內容",
+      noContent: "沒有識別到可讀取的聊天內容。",
+      searchSources: "搜尋引用來源",
+      checkSources: "檢查連結",
+      checking: "檢查中",
+      copySources: "複製參考資料",
+      groupDomain: "按網站",
+      groupMessage: "按訊息",
+      openSource: "開啟來源",
+      locate: "定位原文",
+      sourceCoverage: "可見來源覆蓋",
+      needsReview: "待核對",
+      permissionHint: "請先在插件設定中授權引用連結檢查。",
+      unsafeHint: "為安全起見，本機、私人網路或不支援的來源位址不會被檢查。",
+      opened: "已開啟",
+      format: "格式",
+      selectUser: "只選使用者",
+      selectAssistant: "只選 GPT",
+      preview: "即時預覽",
+      exportOptions: "匯出選項",
+      includeSourceMeta: "包含來源網址",
+      includeExportedAt: "包含匯出時間",
+      filterShortMessages: "過濾簡短確認訊息",
+      mergeAdjacentAnswers: "合併連續 GPT 訊息",
+      generateToc: "產生目錄"
+    };
+  }
   return {
-    budget,
-    budgetSource: "model" as const,
-    budgetLabel: `${selectedModel?.label ?? "GPT"} ${formatTokenCount(budget)}`
+    title: "阅读工具",
+    close: "关闭阅读工具",
+    focus: "专注阅读",
+    export: "选择导出",
+    citations: "引用管理",
+    enterFocus: "进入专注阅读",
+    exitFocus: "退出专注阅读",
+    focusDescription: "只保留当前一轮问题与回答。",
+    previous: "上一轮",
+    next: "下一轮",
+    turn: "第",
+    progress: "阅读进度",
+    selectAll: "全部选择",
+    clear: "清空",
+    selected: "已选择",
+    exportNow: "导出已选内容",
+    noContent: "没有识别到可读取的聊天内容。",
+    searchSources: "搜索引用来源",
+    checkSources: "检查链接",
+    checking: "检查中",
+    copySources: "复制参考资料",
+    groupDomain: "按网站",
+    groupMessage: "按消息",
+    openSource: "打开来源",
+    locate: "定位原文",
+    sourceCoverage: "可见来源覆盖",
+    needsReview: "待核对",
+    permissionHint: "请先在插件设置中授权引用链接检查。",
+    unsafeHint: "出于安全考虑，本机、局域网或不支持的来源地址不会被检查。",
+    opened: "已打开",
+    format: "格式",
+    selectUser: "只选用户",
+    selectAssistant: "只选 GPT",
+    preview: "实时预览",
+    exportOptions: "导出选项",
+    includeSourceMeta: "包含来源网址",
+    includeExportedAt: "包含导出时间",
+    filterShortMessages: "过滤简短确认消息",
+    mergeAdjacentAnswers: "合并连续 GPT 消息",
+    generateToc: "生成目录"
   };
 }
 
-function buildTokenStats(
-  entries: MessageMapEntry[],
-  viewport: ViewportMetrics,
-  settings: NavigatorSettings,
-  modelLabel: string,
-  modelCatalog: ModelBudgetEntry[]
-): TokenStats {
-  const budgetInfo = getTokenBudget(settings, modelLabel, modelCatalog);
-  return {
-    total: entries.reduce((sum, entry) => sum + entry.tokenCount, 0),
-    viewport: viewport.tokenCount,
-    user: entries.reduce((sum, entry) => sum + (entry.role === "user" ? entry.tokenCount : 0), 0),
-    assistant: entries.reduce((sum, entry) => sum + (entry.role === "assistant" ? entry.tokenCount : 0), 0),
-    code: entries.reduce((sum, entry) => sum + entry.codeTokens, 0),
-    table: entries.reduce((sum, entry) => sum + entry.tableTokens, 0),
-    hotMessages: entries.filter((entry) => entry.heatLevel >= 2).length,
-    modelLabel: modelLabel || "",
-    ...budgetInfo
-  };
+function getExportBlockLabel(kind: SelectiveExportSnapshot["messages"][number]["blocks"][number]["kind"], language: AppLanguage) {
+  const labels = language === "en"
+    ? { heading: "Heading", paragraph: "Paragraph", list: "List", code: "Code", table: "Table", image: "Image", attachment: "Attachment" }
+    : language === "zh-TW"
+      ? { heading: "標題", paragraph: "段落", list: "清單", code: "代碼", table: "表格", image: "圖片", attachment: "附件" }
+      : { heading: "标题", paragraph: "段落", list: "列表", code: "代码", table: "表格", image: "图片", attachment: "附件" };
+  return labels[kind];
 }
 
-function buildTokenDetailEntries(entries: MessageMapEntry[], items: NavigatorItem[]): TokenDetailEntry[] {
-  const itemById = new Map(items.map((item) => [item.id, item]));
-  return [...entries]
-    .sort((a, b) => b.tokenCount - a.tokenCount)
-    .slice(0, 5)
-    .map((entry) => {
-      const item = itemById.get(entry.id);
-      return {
-        id: entry.id,
-        role: entry.role,
-        label: item ? getNavigatorDisplayTitle(item) : compactPreview(entry.text, 56),
-        tokenCount: entry.tokenCount,
-        codeTokens: entry.codeTokens,
-        tableTokens: entry.tableTokens,
-        turnIndex: item?.turnIndex ?? entry.turnIndex,
-        heatLevel: Math.max(item?.heatLevel ?? 0, entry.heatLevel) as HeatLevel
-      };
+function getCitationStatusLabel(status: CitationRecord["checkStatus"], language: AppLanguage): string {
+  const labels = language === "en"
+    ? { unchecked: "Unchecked", checking: "Checking", reachable: "Available", missing: "Missing", restricted: "Manual check", "temporary-error": "Temporary error", blocked: "Not permitted" }
+    : language === "zh-TW"
+      ? { unchecked: "未檢查", checking: "檢查中", reachable: "可存取", missing: "已失效", restricted: "需手動確認", "temporary-error": "暫時異常", blocked: "未授權" }
+      : { unchecked: "未检查", checking: "检查中", reachable: "可访问", missing: "已失效", restricted: "需手动确认", "temporary-error": "暂时异常", blocked: "未授权" };
+  return labels[status];
+}
+
+interface ReadingToolsDrawerProps {
+  open: boolean;
+  docked: boolean;
+  panel: ReadingToolPanel;
+  language: AppLanguage;
+  theme: ColorTheme;
+  motionEnabled: boolean;
+  snapshot: SelectiveExportSnapshot;
+  selectedBlockIds: ReadonlySet<string>;
+  items: NavigatorItem[];
+  focusMode: boolean;
+  activeTurnIndex: number;
+  readingProgress: number;
+  citationsChecking: boolean;
+  exportPreferences: SelectiveExportPreferences;
+  onClose: () => void;
+  onPanelChange: (panel: ReadingToolPanel) => void;
+  onToggleFocus: () => void;
+  onChangeTurn: (index: number) => void;
+  onSelectAll: (selected: boolean) => void;
+  onSelectRole: (role: "user" | "assistant") => void;
+  onToggleMessage: (messageId: string) => void;
+  onToggleBlock: (blockId: string) => void;
+  onExportPreferencesChange: (preferences: SelectiveExportPreferences) => void;
+  onExport: () => void;
+  onCheckCitations: () => void;
+  onOpenCitation: (citation: CitationRecord, openExternal: boolean) => void;
+  onCopyCitations: () => void;
+}
+
+function ReadingToolsDrawer({
+  open,
+  docked,
+  panel,
+  language,
+  theme,
+  motionEnabled,
+  snapshot,
+  selectedBlockIds,
+  items,
+  focusMode,
+  activeTurnIndex,
+  readingProgress,
+  citationsChecking,
+  exportPreferences,
+  onClose,
+  onPanelChange,
+  onToggleFocus,
+  onChangeTurn,
+  onSelectAll,
+  onSelectRole,
+  onToggleMessage,
+  onToggleBlock,
+  onExportPreferencesChange,
+  onExport,
+  onCheckCitations,
+  onOpenCitation,
+  onCopyCitations
+}: ReadingToolsDrawerProps) {
+  const labels = getReadingToolsLabels(language);
+  const [citationQuery, setCitationQuery] = useState("");
+  const [citationGroup, setCitationGroup] = useState<"domain" | "message">("domain");
+  const selectedCount = selectedBlockIds.size;
+  const totalBlockCount = snapshot.messages.reduce((total, message) => total + message.blocks.length, 0);
+  const previewSnapshot = useMemo(
+    () => filterSelectiveSnapshot(snapshot, selectedBlockIds),
+    [selectedBlockIds, snapshot]
+  );
+  const filteredCitations = useMemo(() => {
+    const query = citationQuery.trim().toLowerCase();
+    return snapshot.citations.filter((citation) => !query || [citation.title, citation.domain, citation.excerpt]
+      .join(" ").toLowerCase().includes(query));
+  }, [citationQuery, snapshot.citations]);
+  const groupedCitations = useMemo(() => {
+    const groups = new Map<string, CitationRecord[]>();
+    if (citationGroup === "domain") {
+      for (const citation of filteredCitations) {
+        const group = groups.get(citation.domain) ?? [];
+        group.push(citation);
+        groups.set(citation.domain, group);
+      }
+    } else {
+      for (const citation of filteredCitations) {
+        citation.occurrences.forEach((occurrence, index) => {
+          const message = snapshot.messages.find((candidate) => candidate.id === occurrence.messageId);
+          const key = `${labels.turn} ${message?.turnIndex ?? "-"}`;
+          const group = groups.get(key) ?? [];
+          group.push({
+            ...citation,
+            id: `${citation.id}:occurrence:${index}`,
+            href: occurrence.href,
+            messageId: occurrence.messageId,
+            blockId: occurrence.blockId,
+            excerpt: occurrence.excerpt,
+            occurrenceCount: 1,
+            occurrences: [occurrence]
+          });
+          groups.set(key, group);
+        });
+      }
+    }
+    return Array.from(groups.entries());
+  }, [citationGroup, filteredCitations, labels.turn, snapshot.messages]);
+  const assistantBlocks = snapshot.messages.filter((message) => message.role === "assistant").flatMap((message) => message.blocks);
+  const citedBlockIds = new Set(snapshot.citations.flatMap((citation) => citation.occurrences.map((occurrence) => occurrence.blockId)));
+  const coverageCount = assistantBlocks.filter((block) => citedBlockIds.has(block.id)).length;
+  const suspectedUnlinkedCount = assistantBlocks.filter((block) =>
+    !citedBlockIds.has(block.id) && /(?:据|根據|来源|來源|研究|报告|報告|according to|source|study|report)/i.test(block.text)
+  ).length;
+
+  const panelTabs: Array<{ id: ReadingToolPanel; label: string; icon: React.ReactNode }> = [
+    { id: "focus", label: labels.focus, icon: <Focus size={16} aria-hidden="true" /> },
+    { id: "export", label: labels.export, icon: <ListChecks size={16} aria-hidden="true" /> },
+    { id: "citations", label: labels.citations, icon: <Link2 size={16} aria-hidden="true" /> }
+  ];
+
+  return (
+    <aside
+      className={`cnav-reading-drawer${open ? " is-open" : ""}${docked ? " is-docked" : " is-overlay"}${motionEnabled ? "" : " is-static"}`}
+      data-theme={theme}
+      aria-hidden={!open}
+      aria-label={labels.title}
+    >
+      <header className="cnav-reading-header">
+        <span className="cnav-reading-mark"><BookOpen size={18} aria-hidden="true" /></span>
+        <div><strong>{labels.title}</strong><small>2026-V10</small></div>
+        <button type="button" onClick={onClose} aria-label={labels.close} title={labels.close}><X size={18} aria-hidden="true" /></button>
+      </header>
+      <nav className="cnav-reading-tabs" aria-label={labels.title}>
+        {panelTabs.map((tab) => (
+          <button
+            type="button"
+            className={panel === tab.id ? "is-active" : ""}
+            onClick={() => onPanelChange(tab.id)}
+            key={tab.id}
+          >
+            {tab.icon}<span>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="cnav-reading-body" key={panel}>
+        {panel === "focus" ? (
+          <section className="cnav-tool-panel cnav-focus-panel">
+            <div className="cnav-tool-hero">
+              <span><Focus size={20} aria-hidden="true" /></span>
+              <div><strong>{labels.focus}</strong><p>{labels.focusDescription}</p></div>
+            </div>
+            <button className={`cnav-primary-action${focusMode ? " is-danger" : ""}`} type="button" onClick={onToggleFocus}>
+              {focusMode ? <Minimize2 size={17} aria-hidden="true" /> : <Focus size={17} aria-hidden="true" />}
+              {focusMode ? labels.exitFocus : labels.enterFocus}
+            </button>
+            {focusMode ? (
+              <>
+                <div className="cnav-progress-card">
+                  <div><span>{labels.progress}</span><strong>{Math.round(readingProgress)}%</strong></div>
+                  <span className="cnav-progress-track"><i style={{ width: `${readingProgress}%` }} /></span>
+                </div>
+                <div className="cnav-focus-navigation">
+                  <button type="button" onClick={() => onChangeTurn(activeTurnIndex - 1)} disabled={activeTurnIndex <= 0}>
+                    <ChevronLeft size={16} aria-hidden="true" />{labels.previous}
+                  </button>
+                  <strong>{activeTurnIndex + 1} / {Math.max(1, items.length)}</strong>
+                  <button type="button" onClick={() => onChangeTurn(activeTurnIndex + 1)} disabled={activeTurnIndex >= items.length - 1}>
+                    {labels.next}<ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                </div>
+              </>
+            ) : null}
+            <div className="cnav-turn-list">
+              {items.length === 0 ? <p className="cnav-tool-empty">{labels.noContent}</p> : items.map((item, index) => (
+                <button
+                  type="button"
+                  className={activeTurnIndex === index ? "is-active" : ""}
+                  onClick={() => onChangeTurn(index)}
+                  key={item.id}
+                >
+                  <small>{labels.turn} {index + 1}</small>
+                  <span>{item.promptPreview}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {panel === "export" ? (
+          <section className="cnav-tool-panel cnav-export-panel">
+            <div className="cnav-panel-toolbar">
+              <div><strong>{selectedCount}</strong><span>/ {totalBlockCount} {labels.selected}</span></div>
+              <div>
+                <button type="button" onClick={() => onSelectAll(true)}>{labels.selectAll}</button>
+                <button type="button" onClick={() => onSelectAll(false)}>{labels.clear}</button>
+              </div>
+            </div>
+            <div className="cnav-export-role-actions">
+              <button type="button" onClick={() => onSelectRole("user")}>{labels.selectUser}</button>
+              <button type="button" onClick={() => onSelectRole("assistant")}>{labels.selectAssistant}</button>
+            </div>
+            <div className="cnav-export-list">
+              {snapshot.messages.length === 0 ? <p className="cnav-tool-empty">{labels.noContent}</p> : snapshot.messages.map((message) => {
+                const messageSelectedCount = message.blocks.filter((block) => selectedBlockIds.has(block.id)).length;
+                const allSelected = message.blocks.length > 0 && messageSelectedCount === message.blocks.length;
+                return (
+                  <article className="cnav-export-message" key={message.id}>
+                    <button className="cnav-export-message-toggle" type="button" onClick={() => onToggleMessage(message.id)}>
+                      {allSelected ? <CheckSquare2 size={17} aria-hidden="true" /> : <Square size={17} aria-hidden="true" />}
+                      <span>{message.role === "user" ? (language === "en" ? "You" : "用户") : "GPT"}</span>
+                      <small>{messageSelectedCount}/{message.blocks.length}</small>
+                    </button>
+                    <div className="cnav-export-blocks">
+                      {message.blocks.map((block) => (
+                        <button
+                          type="button"
+                          className={selectedBlockIds.has(block.id) ? "is-selected" : ""}
+                          onClick={() => onToggleBlock(block.id)}
+                          key={block.id}
+                        >
+                          {selectedBlockIds.has(block.id) ? <Check size={14} aria-hidden="true" /> : <span />}
+                          <small>{getExportBlockLabel(block.kind, language)}</small>
+                          <p>{block.text.slice(0, 120) || block.sourceLabel || "-"}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <details className="cnav-export-preview" open>
+              <summary>{labels.preview}<span>{previewSnapshot.messages.length}</span></summary>
+              <div>
+                {previewSnapshot.messages.length === 0 ? <p>{labels.noContent}</p> : previewSnapshot.messages.slice(0, 4).map((message) => (
+                  <article key={message.id}>
+                    <strong>{message.role === "user" ? (language === "en" ? "You" : "用户") : "GPT"}</strong>
+                    <p>{message.text.slice(0, 260)}</p>
+                  </article>
+                ))}
+              </div>
+            </details>
+            <details className="cnav-export-options">
+              <summary>{labels.exportOptions}</summary>
+              <div>
+                {([
+                  ["includeSourceMeta", labels.includeSourceMeta],
+                  ["includeExportedAt", labels.includeExportedAt],
+                  ["filterShortMessages", labels.filterShortMessages],
+                  ["mergeAdjacentAnswers", labels.mergeAdjacentAnswers],
+                  ["generateToc", labels.generateToc]
+                ] as const).map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={exportPreferences[key]}
+                      onChange={(event) => onExportPreferencesChange({ ...exportPreferences, [key]: event.currentTarget.checked })}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+            <div className="cnav-export-footer">
+              <label><span>{labels.format}</span><select value={exportPreferences.format} onChange={(event) => onExportPreferencesChange({ ...exportPreferences, format: event.currentTarget.value as ExportDocumentFormat })}>
+                <option value="docx">Word (.docx)</option><option value="html">HTML (.html)</option><option value="md">Markdown (.md)</option>
+              </select></label>
+              <button className="cnav-primary-action" type="button" disabled={selectedCount === 0} onClick={onExport}>
+                <Download size={17} aria-hidden="true" />{labels.exportNow}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {panel === "citations" ? (
+          <section className="cnav-tool-panel cnav-citation-panel">
+            <div className="cnav-citation-summary">
+              <div><span>{labels.sourceCoverage}</span><strong>{coverageCount}/{assistantBlocks.length}</strong></div>
+              <div><span>{labels.needsReview}</span><strong>{suspectedUnlinkedCount}</strong></div>
+            </div>
+            <label className="cnav-tool-search"><Search size={15} aria-hidden="true" /><input value={citationQuery} onChange={(event) => setCitationQuery(event.currentTarget.value)} placeholder={labels.searchSources} /></label>
+            <div className="cnav-citation-actions">
+              <div className="cnav-segmented-control">
+                <button type="button" className={citationGroup === "domain" ? "is-active" : ""} onClick={() => setCitationGroup("domain")}>{labels.groupDomain}</button>
+                <button type="button" className={citationGroup === "message" ? "is-active" : ""} onClick={() => setCitationGroup("message")}>{labels.groupMessage}</button>
+              </div>
+              <button type="button" onClick={onCopyCitations} disabled={snapshot.citations.length === 0}><Copy size={15} aria-hidden="true" />{labels.copySources}</button>
+            </div>
+            <button className="cnav-primary-action" type="button" onClick={onCheckCitations} disabled={citationsChecking || snapshot.citations.length === 0}>
+              {citationsChecking ? <Loader2 className="is-spinning" size={17} aria-hidden="true" /> : <CheckCircle2 size={17} aria-hidden="true" />}
+              {citationsChecking ? labels.checking : labels.checkSources}
+            </button>
+            {snapshot.citations.some((citation) => citation.checkStatus === "blocked" && citation.checkReason === "permission-required") ? (
+              <p className="cnav-permission-hint"><AlertTriangle size={14} aria-hidden="true" />{labels.permissionHint}</p>
+            ) : null}
+            {snapshot.citations.some((citation) => citation.checkStatus === "blocked" && citation.checkReason === "unsafe-url") ? (
+              <p className="cnav-permission-hint is-unsafe"><AlertTriangle size={14} aria-hidden="true" />{labels.unsafeHint}</p>
+            ) : null}
+            <div className="cnav-citation-list">
+              {groupedCitations.length === 0 ? <p className="cnav-tool-empty">{labels.noContent}</p> : groupedCitations.map(([group, citations]) => (
+                <section key={group}>
+                  <h3>{group}<span>{citations.length}</span></h3>
+                  {citations.map((citation) => (
+                    <article className="cnav-citation-item" key={citation.id}>
+                      <div><strong>{citation.title}</strong><small>{citation.domain}{citation.openedAt ? ` · ${labels.opened}` : ""}</small></div>
+                      <p>{citation.excerpt}</p>
+                      <span className={`cnav-citation-status is-${citation.checkStatus}`}>{getCitationStatusLabel(citation.checkStatus, language)}{citation.statusCode ? ` · ${citation.statusCode}` : ""}</span>
+                      <div className="cnav-citation-item-actions">
+                        <button type="button" onClick={() => onOpenCitation(citation, false)}>{labels.locate}</button>
+                        <button type="button" onClick={() => onOpenCitation(citation, true)}>{labels.openSource}<ExternalLink size={13} aria-hidden="true" /></button>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function clearFocusPresentation() {
+  document.documentElement.removeAttribute("data-cnav-focus-mode");
+  document.querySelectorAll<HTMLElement>(`[${FOCUS_ACTIVE_ATTR}],[${FOCUS_HIDDEN_ATTR}],[${FOCUS_CHROME_ATTR}]`)
+    .forEach((element) => {
+      element.removeAttribute(FOCUS_ACTIVE_ATTR);
+      element.removeAttribute(FOCUS_HIDDEN_ATTR);
+      element.removeAttribute(FOCUS_CHROME_ATTR);
     });
 }
 
-function createViewportMetrics(entries: MessageMapEntry[]): ViewportMetrics {
-  const visibleIds = new Set<string>();
-  let tokenCount = 0;
-  const primaryScrollContainer = getPrimaryConversationScrollContainer();
-  const primaryViewport = getContainerViewportRect(primaryScrollContainer);
-  const viewportHeight = Math.max(1, primaryViewport.height);
-  const documentHeight = Math.max(viewportHeight, getContainerScrollHeight(primaryScrollContainer));
-  const scrollableHeight = Math.max(1, documentHeight - getContainerClientHeight(primaryScrollContainer));
-
-  for (const entry of entries) {
-    const element = anchorRegistry.get(entry.id);
-    if (!element) {
-      continue;
-    }
-
-    const scrollContainer = getScrollContainer(element);
-    const viewport = getContainerViewportRect(scrollContainer);
-    const rect = element?.getBoundingClientRect();
-    if (!rect || rect.bottom < viewport.top || rect.top > viewport.bottom) {
-      continue;
-    }
-
-    visibleIds.add(entry.id);
-    tokenCount += entry.tokenCount;
+function markFocusChromeElements() {
+  const remoteLayoutSelectors = activeCompatRules.flatMap((rule) => [
+    ...(rule.layoutSelectors?.sidebar ?? []),
+    ...(rule.layoutSelectors?.composer ?? []),
+    ...(rule.layoutSelectors?.header ?? [])
+  ]);
+  const selectors = Array.from(new Set([
+    ...CHATGPT_SIDEBAR_SELECTORS,
+    ...CHATGPT_COMPOSER_SELECTORS,
+    ...CHATGPT_HEADER_SELECTORS,
+    ...remoteLayoutSelectors,
+    "main form",
+    '[aria-label*="composer" i]',
+    '[role="banner"]',
+    'nav[aria-label*="侧边栏" i]',
+    'nav[aria-label*="邊欄" i]',
+    'nav[aria-label*="sidebar" i]',
+    'nav[aria-label*="历史聊天" i]',
+    'nav[aria-label*="歷史聊天" i]'
+  ]));
+  const candidates = Array.from(new Set(selectors.flatMap((selector) => safeQueryAll(selector))));
+  for (const element of candidates) {
+    if (!element.closest(`#${ROOT_ID}`)) element.setAttribute(FOCUS_CHROME_ATTR, "true");
   }
-
-  return {
-    tokenCount,
-    visibleIds,
-    topRatio: Math.min(1, Math.max(0, getContainerScrollTop(primaryScrollContainer) / scrollableHeight)),
-    heightRatio: Math.min(1, Math.max(0.05, viewportHeight / documentHeight))
-  };
-}
-
-function toPercent(value: number): string {
-  return `${Math.min(100, Math.max(0, value)).toFixed(2)}%`;
 }
 
 function ConversationNavigator() {
@@ -5656,7 +5355,7 @@ function ConversationNavigator() {
   const t = getTranslation(settings.language);
   const [pageId, setPageId] = useState(() => {
     const initialSessionId = createConversationSessionId(0);
-    activeTokenSessionId = initialSessionId;
+    activeConversationSessionId = initialSessionId;
     return initialSessionId;
   });
   const pageKey = pageId;
@@ -5672,24 +5371,27 @@ function ConversationNavigator() {
   const [scrollJumpPosition, setScrollJumpPosition] = useState<FloatingControlPosition>(() =>
     getDefaultScrollJumpPosition()
   );
-  const [viewportMetrics, setViewportMetrics] = useState<ViewportMetrics>({
-    tokenCount: 0,
-    visibleIds: new Set<string>(),
-    topRatio: 0,
-    heightRatio: 0
-  });
-  const [tokenHudDraft, setTokenHudDraft] = useState<{ x: number; y: number } | null>(null);
-  const [modelCatalog, setModelCatalog] = useState<ModelBudgetEntry[]>(BUILT_IN_MODEL_BUDGETS);
-  const [modelCatalogUpdatedAt, setModelCatalogUpdatedAt] = useState(0);
-  const [detectedModelLabel, setDetectedModelLabel] = useState("");
   const [compatRuleCount, setCompatRuleCount] = useState(0);
   const [officialPopoverOpen, setOfficialPopoverOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeToolPanel, setActiveToolPanel] = useState<ReadingToolPanel>("focus");
+  const [focusMode, setFocusMode] = useState(false);
+  const [activeFocusTurn, setActiveFocusTurn] = useState(0);
+  const [readingProgress, setReadingProgress] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
+  const [exportPreferences, setExportPreferences] = useState<SelectiveExportPreferences>(
+    DEFAULT_SELECTIVE_EXPORT_PREFERENCES
+  );
+  const [selectionTouched, setSelectionTouched] = useState(false);
+  const [selectionPageKey, setSelectionPageKey] = useState("");
+  const [citationState, setCitationState] = useState<Record<string, Partial<CitationRecord>>>({});
+  const [citationsChecking, setCitationsChecking] = useState(false);
   const itemsRef = useRef(items);
   const mapEntriesRef = useRef(mapEntries);
   const sessionGenerationRef = useRef(0);
   const sessionIdRef = useRef(pageId);
   const settingsRef = useRef(settings);
-  const modelCatalogRef = useRef(modelCatalog);
   const resizeFrameRef = useRef(resizeFrame);
   const canvasResizeFrameRef = useRef(canvasResizeFrame);
   const canvasResizeTargetRef = useRef<CanvasWidthTarget | null>(null);
@@ -5699,26 +5401,70 @@ function ConversationNavigator() {
   const scanQueuedRef = useRef(false);
   const lastScanScrollYRef = useRef(getCurrentConversationScrollTop());
   const forceDomRebuildOnNextScanRef = useRef(true);
+  const focusScrollPositionsRef = useRef<Map<number, number>>(new Map());
+  const focusPresentedTurnRef = useRef<number | null>(null);
+  const readingSnapshotCacheRef = useRef<ReadingMessageParseCache>(new Map());
+  const citationStateRef = useRef(citationState);
+  const citationRequestGenerationRef = useRef(0);
 
   itemsRef.current = items;
   mapEntriesRef.current = mapEntries;
   sessionIdRef.current = pageId;
-  activeTokenSessionId = pageId;
+  activeConversationSessionId = pageId;
   settingsRef.current = settings;
-  modelCatalogRef.current = modelCatalog;
   resizeFrameRef.current = resizeFrame;
   canvasResizeFrameRef.current = canvasResizeFrame;
+  citationStateRef.current = citationState;
   latestNavigatorExportState = {
     items,
     pageKey,
     language: settings.language
   };
 
+  const readingSourceMessages = useMemo<ReadingSourceMessage[]>(() => mapEntries
+    .filter((entry) => entry.mounted && anchorRegistry.has(entry.id))
+    .map((entry) => ({
+      id: entry.id,
+      role: entry.role,
+      element: anchorRegistry.get(entry.id) as HTMLElement,
+      text: entry.text,
+      turnIndex: entry.turnIndex
+    })), [mapEntries]);
+  const selectiveSnapshot = useMemo<SelectiveExportSnapshot>(() => {
+    if (!drawerOpen) {
+      return {
+        title: document.title,
+        url: location.href,
+        pageKey,
+        exportedAt: Date.now(),
+        messages: [],
+        codeBlocks: [],
+        nodes: [],
+        citations: []
+      };
+    }
+    const source = getPageSourceMeta();
+    return buildSelectiveExportSnapshot({
+      title: source.sourceTitle,
+      url: source.sourceUrl,
+      pageKey: source.pageKey,
+      exportedAt: Date.now(),
+      sourceMessages: readingSourceMessages,
+      nodes: createExportNodes(),
+      previousCitationState: new Map(Object.entries(citationState)),
+      messageCache: readingSnapshotCacheRef.current
+    });
+  }, [citationState, drawerOpen, pageKey, readingSourceMessages]);
+  const drawerDocked = drawerOpen && (
+    settings.drawerMode === "dock" ||
+    (settings.drawerMode === "auto" && viewportWidth >= 1280 && !getActiveCanvasWidthTarget())
+  );
+
   const resetConversationState = useCallback(() => {
     sessionGenerationRef.current += 1;
     const nextSessionId = createConversationSessionId(sessionGenerationRef.current);
     sessionIdRef.current = nextSessionId;
-    activeTokenSessionId = nextSessionId;
+    activeConversationSessionId = nextSessionId;
     latestPageHealth = null;
     latestNavigatorExportState = {
       items: [],
@@ -5738,15 +5484,20 @@ function ConversationNavigator() {
     itemsRef.current = [];
     mapEntriesRef.current = [];
     anchorRegistry.clear();
+    focusScrollPositionsRef.current.clear();
+    focusPresentedTurnRef.current = null;
+    readingSnapshotCacheRef.current.clear();
+    citationRequestGenerationRef.current += 1;
+    citationStateRef.current = {};
+    clearFocusPresentation();
+    setFocusMode(false);
+    setReadingProgress(0);
+    setCitationState({});
+    setCitationsChecking(false);
+    setSelectionTouched(false);
+    setSelectionPageKey("");
     setItems([]);
     setMapEntries([]);
-    setViewportMetrics({
-      tokenCount: 0,
-      visibleIds: new Set<string>(),
-      topRatio: 0,
-      heightRatio: 0
-    });
-    setDetectedModelLabel("");
     setPageId(nextSessionId);
   }, []);
 
@@ -5759,9 +5510,7 @@ function ConversationNavigator() {
     const scanSessionId = sessionIdRef.current;
     scanRunningRef.current = true;
     try {
-      const modelLabel = detectModelLabel();
-      const { budget } = getTokenBudget(settingsRef.current, modelLabel, modelCatalogRef.current);
-      const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData(budget);
+      const { items: nextItems, mapEntries: nextMapEntries, health: nextHealth } = buildNavigatorData();
       if (scanSessionId !== sessionIdRef.current) {
         return;
       }
@@ -5795,7 +5544,6 @@ function ConversationNavigator() {
       latestPageHealth = toPageAdapterHealth(nextHealth);
       setItems(merged.items);
       setMapEntries(merged.mapEntries);
-      setDetectedModelLabel((current) => (current === modelLabel ? current : modelLabel));
     } catch (error) {
       console.warn("[GPT页面增强工具] 扫描当前页面失败，保留上一轮数据：", error);
     } finally {
@@ -5845,25 +5593,367 @@ function ConversationNavigator() {
   };
   const updateSettings = commitSettingsPatch;
 
-  const syncModelCatalog = useCallback(async (manual = false) => {
-    try {
-      const models = await syncOpenAiModelCatalog();
-      const updatedAt = Date.now();
-      setModelCatalog(models);
-      setModelCatalogUpdatedAt(updatedAt);
-      await storageSet({
-        [MODEL_CATALOG_STORAGE_KEY]: {
-          updatedAt,
-          models
-        } satisfies StoredModelCatalog
+  const setFocusTurn = (nextIndex: number) => {
+    if (items.length === 0) return;
+    if (focusMode) focusScrollPositionsRef.current.set(activeFocusTurn, getCurrentConversationScrollTop());
+    const index = Math.min(items.length - 1, Math.max(0, nextIndex));
+    setActiveFocusTurn(index);
+    if (!focusMode) setFocusMode(true);
+    setDrawerOpen(true);
+    setActiveToolPanel("focus");
+  };
+
+  const toggleFocusMode = () => {
+    if (!focusMode && items.length > 0) {
+      const viewportTarget = Math.max(96, window.innerHeight * 0.32);
+      let nextIndex = items.findIndex((item) => {
+        const anchor = anchorRegistry.get(item.id);
+        if (!anchor) return false;
+        const rect = anchor.getBoundingClientRect();
+        return rect.bottom >= viewportTarget && rect.top <= window.innerHeight * 0.72;
       });
-    } catch (error) {
-      if (manual) {
-        console.warn("[GPT页面增强工具] 同步 OpenAI 模型预算失败：", error);
-      }
-      setModelCatalog(BUILT_IN_MODEL_BUDGETS);
+      if (nextIndex < 0) nextIndex = Math.max(0, items.length - 1);
+      setActiveFocusTurn(nextIndex);
     }
-  }, [resetConversationState]);
+    setFocusMode((current) => !current);
+    setDrawerOpen(true);
+    setActiveToolPanel("focus");
+  };
+
+  const selectAllBlocks = (selected: boolean) => {
+    setSelectionTouched(true);
+    setSelectedBlockIds(selected ? getAllSelectableBlockIds(selectiveSnapshot) : new Set());
+  };
+
+  const toggleExportBlock = (blockId: string) => {
+    setSelectionTouched(true);
+    setSelectedBlockIds((current) => {
+      const next = new Set(current);
+      if (next.has(blockId)) next.delete(blockId);
+      else next.add(blockId);
+      return next;
+    });
+  };
+
+  const toggleExportMessage = (messageId: string) => {
+    const message = selectiveSnapshot.messages.find((candidate) => candidate.id === messageId);
+    if (!message) return;
+    setSelectionTouched(true);
+    setSelectedBlockIds((current) => {
+      const next = new Set(current);
+      const allSelected = message.blocks.length > 0 && message.blocks.every((block) => next.has(block.id));
+      for (const block of message.blocks) {
+        if (allSelected) next.delete(block.id);
+        else next.add(block.id);
+      }
+      return next;
+    });
+  };
+
+  const selectExportRole = (role: "user" | "assistant") => {
+    setSelectionTouched(true);
+    setSelectedBlockIds(new Set(
+      selectiveSnapshot.messages
+        .filter((message) => message.role === role)
+        .flatMap((message) => message.blocks.map((block) => block.id))
+    ));
+  };
+
+  const updateSelectiveExportPreferences = (next: SelectiveExportPreferences) => {
+    const normalized = normalizeSelectiveExportPreferences(next);
+    setExportPreferences(normalized);
+    void saveSelectiveExportPreferences(normalized);
+  };
+
+  const exportSelectedBlocks = () => {
+    const filtered = applySelectiveExportPreferences(
+      filterSelectiveSnapshot(selectiveSnapshot, selectedBlockIds),
+      exportPreferences
+    );
+    const messages: ExportChatMessage[] = filtered.messages.map((message) => {
+      const messageBlockIds = new Set(message.blocks.map((block) => block.id));
+      const citations = filtered.citations.filter((citation) =>
+        citation.occurrences.some((occurrence) => messageBlockIds.has(occurrence.blockId))
+      );
+      const references = citations.length
+        ? `\n\n${settings.language === "en" ? "Sources" : "引用来源"}:\n${citations.map((citation) => `- ${citation.title}: ${citation.href}`).join("\n")}`
+        : "";
+      return { ...message, text: `${message.text}${references}` };
+    });
+    const exportSnapshot: ExportSnapshot = { ...filtered, messages };
+    const file = buildExportDocument(exportSnapshot, "chat", exportPreferences.format);
+    downloadExportFile(file.filename, file.data, file.mimeType);
+  };
+
+  const persistCitationState = async (
+    next: Record<string, Partial<CitationRecord>>,
+    storageKey = getCitationStorageKey()
+  ) => {
+    if (storageKey === getCitationStorageKey()) {
+      citationStateRef.current = next;
+      setCitationState(next);
+    }
+    await writeCitationConversation(storageKey, next);
+  };
+
+  const markCitationOpened = (citation: CitationRecord) => {
+    const currentState = citationStateRef.current;
+    const next = {
+      ...currentState,
+      [citation.canonicalUrl]: {
+        ...currentState[citation.canonicalUrl],
+        openedAt: Date.now()
+      }
+    };
+    void persistCitationState(next);
+  };
+
+  const openCitation = (citation: CitationRecord, openExternal: boolean) => {
+    const messageAnchor = anchorRegistry.get(citation.messageId);
+    if (messageAnchor) {
+      const exactAnchor = Array.from(messageAnchor.querySelectorAll<HTMLAnchorElement>("a[href]"))
+        .find((anchor) => canonicalizeCitationUrl(anchor.href, location.href) === citation.canonicalUrl);
+      const target = exactAnchor?.closest<HTMLElement>("p,li,blockquote,div") ?? messageAnchor;
+      target.setAttribute(CITATION_HIGHLIGHT_ATTR, "true");
+      scrollElementIntoView(target, settings.navigateAnimationEnabled);
+      window.setTimeout(() => target.removeAttribute(CITATION_HIGHLIGHT_ATTR), 1400);
+    }
+    if (openExternal) {
+      markCitationOpened(citation);
+      window.open(citation.href, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const checkAllCitations = async () => {
+    if (selectiveSnapshot.citations.length === 0 || citationsChecking) return;
+    const requestGeneration = ++citationRequestGenerationRef.current;
+    const storageKey = getCitationStorageKey();
+    setCitationsChecking(true);
+    const checking = { ...citationStateRef.current };
+    for (const citation of selectiveSnapshot.citations) {
+      checking[citation.canonicalUrl] = {
+        ...checking[citation.canonicalUrl],
+        checkStatus: "checking",
+        checkReason: undefined
+      };
+    }
+    citationStateRef.current = checking;
+    setCitationState(checking);
+    try {
+      const urls = selectiveSnapshot.citations.map((citation) => citation.canonicalUrl);
+      const results = await checkCitationsFromBackground(urls);
+      if (
+        requestGeneration !== citationRequestGenerationRef.current ||
+        storageKey !== getCitationStorageKey()
+      ) return;
+      const resultByUrl = new Map(results.map((result) => [result.url, result]));
+      const next = { ...checking };
+      for (const url of urls) {
+        const result = resultByUrl.get(url) ?? {
+          url,
+          status: "temporary-error" as const,
+          checkedAt: Date.now()
+        };
+        next[url] = {
+          ...next[url],
+          checkStatus: result.status,
+          checkReason: result.reason,
+          statusCode: result.statusCode,
+          checkedAt: result.checkedAt
+        };
+      }
+      await persistCitationState(next, storageKey);
+    } catch {
+      if (
+        requestGeneration !== citationRequestGenerationRef.current ||
+        storageKey !== getCitationStorageKey()
+      ) return;
+      const next = { ...checking };
+      for (const citation of selectiveSnapshot.citations) {
+        next[citation.canonicalUrl] = {
+          ...next[citation.canonicalUrl],
+          checkStatus: "temporary-error",
+          checkReason: undefined,
+          checkedAt: Date.now()
+        };
+      }
+      await persistCitationState(next, storageKey);
+    } finally {
+      if (requestGeneration === citationRequestGenerationRef.current) {
+        setCitationsChecking(false);
+      }
+    }
+  };
+
+  const copyCitationList = async () => {
+    const text = selectiveSnapshot.citations
+      .map((citation, index) => `${index + 1}. ${citation.title} — ${citation.href}`)
+      .join("\n");
+    if (text) await writeTextToClipboard(text);
+  };
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadSelectiveExportPreferences().then((preferences) => {
+      if (!cancelled) setExportPreferences(preferences);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const handleCommand = (event: Event) => {
+      const detail = (event as CustomEvent<{ command?: string; panel?: ReadingToolPanel }>).detail;
+      if (detail?.panel) setActiveToolPanel(detail.panel);
+      if (detail?.command === "close") setDrawerOpen(false);
+      else if (detail?.command === "toggle") setDrawerOpen((current) => !current);
+      else setDrawerOpen(true);
+    };
+    window.addEventListener(PAGE_COMMAND_EVENT, handleCommand);
+    return () => window.removeEventListener(PAGE_COMMAND_EVENT, handleCommand);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const storageKey = getCitationStorageKey();
+    void readCitationConversation(storageKey).then((state) => {
+      if (!cancelled && storageKey === getCitationStorageKey()) {
+        citationStateRef.current = state;
+        setCitationState(state);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [pageKey]);
+
+  useEffect(() => {
+    if (!drawerOpen || selectiveSnapshot.messages.length === 0) return;
+    const allIds = getAllSelectableBlockIds(selectiveSnapshot);
+    if (selectionPageKey !== selectiveSnapshot.pageKey) {
+      setSelectionPageKey(selectiveSnapshot.pageKey);
+      setSelectionTouched(false);
+      setSelectedBlockIds(allIds);
+      return;
+    }
+    if (!selectionTouched) {
+      setSelectedBlockIds(allIds);
+      return;
+    }
+    setSelectedBlockIds((current) => new Set(Array.from(current).filter((id) => allIds.has(id))));
+  }, [drawerOpen, selectionPageKey, selectionTouched, selectiveSnapshot]);
+
+  useEffect(() => {
+    if (drawerDocked) document.documentElement.setAttribute("data-cnav-drawer-docked", "true");
+    else document.documentElement.removeAttribute("data-cnav-drawer-docked");
+    return () => document.documentElement.removeAttribute("data-cnav-drawer-docked");
+  }, [drawerDocked]);
+
+  useEffect(() => {
+    if (settings.uiMotionEnabled) document.documentElement.removeAttribute("data-cnav-ui-motion");
+    else document.documentElement.setAttribute("data-cnav-ui-motion", "off");
+    return () => document.documentElement.removeAttribute("data-cnav-ui-motion");
+  }, [settings.uiMotionEnabled]);
+
+  useEffect(() => {
+    if (!focusMode || items.length === 0) {
+      focusPresentedTurnRef.current = null;
+      clearFocusPresentation();
+      return;
+    }
+    const activeTurn = Math.min(items.length - 1, Math.max(0, activeFocusTurn)) + 1;
+    const shouldRestorePosition = focusPresentedTurnRef.current !== activeFocusTurn;
+    focusPresentedTurnRef.current = activeFocusTurn;
+    document.documentElement.setAttribute("data-cnav-focus-mode", "true");
+    if (settings.focusHideChrome) {
+      markFocusChromeElements();
+    } else {
+      document.querySelectorAll<HTMLElement>(`[${FOCUS_CHROME_ATTR}]`)
+        .forEach((element) => element.removeAttribute(FOCUS_CHROME_ATTR));
+    }
+    for (const entry of mapEntries) {
+      const anchor = anchorRegistry.get(entry.id);
+      if (!anchor) continue;
+      if (entry.turnIndex === activeTurn) {
+        anchor.removeAttribute(FOCUS_HIDDEN_ATTR);
+        anchor.setAttribute(FOCUS_ACTIVE_ATTR, "true");
+      } else {
+        anchor.removeAttribute(FOCUS_ACTIVE_ATTR);
+        if (settings.focusCollapseOtherTurns) anchor.setAttribute(FOCUS_HIDDEN_ATTR, "true");
+        else anchor.removeAttribute(FOCUS_HIDDEN_ATTR);
+      }
+    }
+    const activeAnchor = anchorRegistry.get(items[activeTurn - 1]?.id);
+    const savedPosition = focusScrollPositionsRef.current.get(activeFocusTurn);
+    if (activeAnchor && shouldRestorePosition) window.requestAnimationFrame(() => {
+      if (savedPosition !== undefined) setCurrentConversationScrollTop(savedPosition);
+      else scrollAnchorToTop(activeAnchor, settings.navigateAnimationEnabled);
+    });
+  }, [activeFocusTurn, focusMode, items, mapEntries, settings.focusCollapseOtherTurns, settings.focusHideChrome, settings.navigateAnimationEnabled]);
+
+  useEffect(() => clearFocusPresentation, []);
+
+  useEffect(() => {
+    if (!focusMode) {
+      setReadingProgress(0);
+      return;
+    }
+    const updateProgress = () => {
+      const entry = mapEntries.find((candidate) => candidate.role === "assistant" && candidate.turnIndex === activeFocusTurn + 1);
+      const anchor = entry ? anchorRegistry.get(entry.id) : null;
+      if (!anchor) return;
+      focusScrollPositionsRef.current.set(activeFocusTurn, getCurrentConversationScrollTop());
+      const rect = anchor.getBoundingClientRect();
+      const viewportHeight = Math.max(240, window.innerHeight - 144);
+      if (rect.height <= viewportHeight) {
+        setReadingProgress(100);
+        return;
+      }
+      const progress = Math.min(100, Math.max(0, ((96 - rect.top) / Math.max(1, rect.height - viewportHeight)) * 100));
+      setReadingProgress(progress);
+    };
+    updateProgress();
+    window.addEventListener("scroll", updateProgress, true);
+    window.addEventListener("resize", updateProgress);
+    return () => {
+      window.removeEventListener("scroll", updateProgress, true);
+      window.removeEventListener("resize", updateProgress);
+    };
+  }, [activeFocusTurn, focusMode, mapEntries]);
+
+  useEffect(() => {
+    if (!focusMode) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setFocusMode(false);
+      } else if (event.altKey && event.key === "ArrowUp") {
+        event.preventDefault();
+        setFocusTurn(activeFocusTurn - 1);
+      } else if (event.altKey && event.key === "ArrowDown") {
+        event.preventDefault();
+        setFocusTurn(activeFocusTurn + 1);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [activeFocusTurn, focusMode, items.length]);
+
+  useEffect(() => {
+    if (!drawerOpen || selectiveSnapshot.citations.length === 0) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!target || target.closest(`#${ROOT_ID}`)) return;
+      const canonical = canonicalizeCitationUrl(target.href, location.href);
+      const citation = selectiveSnapshot.citations.find((candidate) => candidate.canonicalUrl === canonical);
+      if (citation) markCitationOpened(citation);
+    };
+    document.addEventListener("click", handleClick, true);
+    return () => document.removeEventListener("click", handleClick, true);
+  }, [drawerOpen, selectiveSnapshot.citations]);
 
   useEffect(() => {
     let frame = 0;
@@ -5982,40 +6072,6 @@ function ConversationNavigator() {
       window.removeEventListener("conversation-navigator-route-change", handleRouteChange);
     };
   }, [resetConversationState, scheduleScan]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let catalogSyncWork: ScheduledIdleWork | null = null;
-
-    async function loadModelCatalog() {
-      const stored = await storageGet<StoredModelCatalog>(MODEL_CATALOG_STORAGE_KEY);
-      if (cancelled) {
-        return;
-      }
-
-      if (stored?.models?.length) {
-        const models = curateModelCatalog(stored.models);
-        setModelCatalog(models);
-        setModelCatalogUpdatedAt(stored.updatedAt || 0);
-      }
-
-      const shouldSync = !stored?.updatedAt || Date.now() - stored.updatedAt > MODEL_SYNC_INTERVAL_MS;
-      if (shouldSync) {
-        catalogSyncWork = requestIdleWork(() => {
-          if (!cancelled) {
-            void syncModelCatalog(false);
-          }
-        }, 3000);
-      }
-    }
-
-    loadModelCatalog();
-
-    return () => {
-      cancelled = true;
-      cancelIdleWork(catalogSyncWork);
-    };
-  }, [syncModelCatalog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6516,34 +6572,16 @@ function ConversationNavigator() {
       window.removeEventListener("scroll", scheduleUpdate, true);
       window.removeEventListener("resize", scheduleUpdate);
     };
-  }, []);
+  }, [drawerOpen, focusMode]);
 
   useEffect(() => {
     scheduleScan(100);
   }, [
-    modelCatalog,
     pageKey,
     scheduleScan,
     settings.compatRulesRemoteEnabled,
-    settings.compatRulesSource,
-    settings.manualTokenBudget,
-    settings.tokenBudgetMode,
-    settings.tokenModelId
+    settings.compatRulesSource
   ]);
-
-  useEffect(() => {
-    const handleTokenCountsUpdated = (event: Event) => {
-      const sessionId = event instanceof CustomEvent
-        ? (event.detail as { sessionId?: string } | undefined)?.sessionId
-        : undefined;
-      if (!isCurrentTokenSession(sessionId, sessionIdRef.current)) {
-        return;
-      }
-      scheduleScan(50);
-    };
-    window.addEventListener(TOKEN_COUNTS_UPDATED_EVENT, handleTokenCountsUpdated);
-    return () => window.removeEventListener(TOKEN_COUNTS_UPDATED_EVENT, handleTokenCountsUpdated);
-  }, [scheduleScan]);
 
   useEffect(() => {
     const getMutationElement = (mutation: MutationRecord): HTMLElement | null => {
@@ -6606,54 +6644,9 @@ function ConversationNavigator() {
     };
   }, [resetConversationState, scheduleScan]);
 
-  useEffect(() => {
-    let frame = 0;
-
-    const updateViewport = () => {
-      frame = 0;
-      if (settingsRef.current.tokenPanelEnabled) {
-        setViewportMetrics(createViewportMetrics(mapEntries));
-      }
-    };
-
-    const scheduleViewportUpdate = () => {
-      if (frame) {
-        return;
-      }
-      frame = window.requestAnimationFrame(updateViewport);
-    };
-
-    scheduleViewportUpdate();
-    window.addEventListener("scroll", scheduleViewportUpdate, { passive: true, capture: true });
-    window.addEventListener("resize", scheduleViewportUpdate);
-
-    return () => {
-      if (frame) {
-        window.cancelAnimationFrame(frame);
-      }
-      window.removeEventListener("scroll", scheduleViewportUpdate, true);
-      window.removeEventListener("resize", scheduleViewportUpdate);
-    };
-  }, [mapEntries, settings.tokenPanelEnabled]);
-
-  const tokenStats = useMemo(
-    () => buildTokenStats(mapEntries, viewportMetrics, settings, detectedModelLabel, modelCatalog),
-    [detectedModelLabel, mapEntries, modelCatalog, settings, viewportMetrics]
-  );
-  const tokenDetailEntries = useMemo(
-    () => buildTokenDetailEntries(mapEntries, items),
-    [items, mapEntries]
-  );
-  const tokenBudgetPercent = tokenStats.budget > 0 ? (tokenStats.total / tokenStats.budget) * 100 : 0;
-  const hudPosition =
-    tokenHudDraft ??
-    (settings.tokenHudX > 0 || settings.tokenHudY > 0
-      ? { x: settings.tokenHudX, y: settings.tokenHudY }
-      : null);
 
   const showCanvasHandles = Boolean(canvasResizeFrame && (settings.canvasWidthEnabled || canvasResizingSide));
   const showThreadHandles = Boolean(resizeFrame && (settings.threadResizeEnabled || resizingSide) && !showCanvasHandles);
-  const showFloatingTokenPanel = true;
   const navigatorCollapsedForFloatingTools = true;
 
   const startThreadResize =
@@ -6871,196 +6864,61 @@ function ConversationNavigator() {
       document.addEventListener("keydown", handleKeyDown, true);
     };
 
-  const startTokenHudDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("button, input, select")) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const shell = event.currentTarget.closest<HTMLElement>(".cnav-token-hud");
-    const rect = shell?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startLeft = rect.left;
-    const startTop = rect.top;
-    let latestPosition = { x: Math.round(startLeft), y: Math.round(startTop) };
-
-    const handleMove = (moveEvent: PointerEvent) => {
-      const nextX = Math.round(
-        Math.min(window.innerWidth - DEFAULT_HUD_WIDTH - 8, Math.max(8, startLeft + moveEvent.clientX - startX))
-      );
-      const nextY = Math.round(Math.min(window.innerHeight - 96, Math.max(8, startTop + moveEvent.clientY - startY)));
-      latestPosition = { x: nextX, y: nextY };
-      setTokenHudDraft(latestPosition);
-    };
-
-    const handleUp = () => {
-      document.removeEventListener("pointermove", handleMove, true);
-      document.removeEventListener("pointerup", handleUp, true);
-      document.removeEventListener("pointercancel", handleUp, true);
-      updateSettings({
-        tokenHudX: latestPosition.x,
-        tokenHudY: latestPosition.y
-      });
-      setTokenHudDraft(null);
-    };
-
-    document.addEventListener("pointermove", handleMove, true);
-    document.addEventListener("pointerup", handleUp, true);
-    document.addEventListener("pointercancel", handleUp, true);
-  };
-
-  const renderTokenPanel = (variant: "hud" | "dock") => {
-    if (!settings.tokenPanelEnabled) {
-      return null;
-    }
-
-    const collapsed = variant === "hud" && settings.tokenPanelCollapsed;
-    const userPercent = tokenStats.total > 0 ? (tokenStats.user / tokenStats.total) * 100 : 0;
-    const assistantPercent = tokenStats.total > 0 ? (tokenStats.assistant / tokenStats.total) * 100 : 0;
-    const codePercent = tokenStats.total > 0 ? (tokenStats.code / tokenStats.total) * 100 : 0;
-    const tablePercent = tokenStats.total > 0 ? (tokenStats.table / tokenStats.total) * 100 : 0;
-    const tokenWarningLevel = tokenBudgetPercent >= 100 ? "danger" : tokenBudgetPercent >= 82 ? "warning" : "normal";
-    const tokenPanelLabels =
-      settings.language === "en"
-        ? {
-            details: "Message details",
-            warning: "Token budget is getting tight",
-            danger: "Token budget exceeded",
-            trim: "Trim high-token nodes first",
-            user: "User",
-            assistant: "Assistant",
-            code: "code",
-            table: "table"
-          }
-        : settings.language === "zh-TW"
-          ? {
-              details: "消息明細",
-              warning: "Token 預算接近上限",
-              danger: "Token 預算已超出",
-              trim: "優先裁剪高 token 節點",
-              user: "用戶",
-              assistant: "助手",
-              code: "代碼",
-              table: "表格"
-            }
-          : {
-              details: "消息明细",
-              warning: "Token 预算接近上限",
-              danger: "Token 预算已超出",
-              trim: "优先裁剪高 token 节点",
-              user: "用户",
-              assistant: "助手",
-              code: "代码",
-              table: "表格"
-            };
-    const hudStyle =
-      variant === "hud"
-        ? hudPosition
-          ? { left: hudPosition.x, top: hudPosition.y }
-          : { right: DEFAULT_HUD_WIDTH + DEFAULT_HUD_GAP + 88, top: 118 }
-        : undefined;
-
-    return (
-      <section
-        className={`cnav-token-panel cnav-token-${variant}${collapsed ? " is-collapsed" : ""}`}
-        data-theme={theme}
-        style={hudStyle}
-        aria-label={t.tokenPanel}
-      >
-        <div
-          className="cnav-token-head"
-          onPointerDown={variant === "hud" ? startTokenHudDrag : undefined}
-          onDoubleClick={variant === "hud" ? () => updateSettings({ tokenPanelCollapsed: false }) : undefined}
-        >
-          {variant === "hud" ? <GripVertical size={14} aria-hidden="true" /> : <BarChart3 size={14} aria-hidden="true" />}
-          <span>{t.tokenPanelShort}</span>
-          <small>
-            {collapsed
-              ? `${formatTokenCount(tokenStats.total)} · ${Math.round(tokenBudgetPercent)}%`
-              : t.tokenPanelEstimated}
-          </small>
-          {variant === "hud" ? (
-            <button
-              type="button"
-              className="cnav-token-mini-button"
-              title={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
-              aria-label={collapsed ? t.tokenPanelExpand : t.tokenPanelCollapse}
-              onClick={() => updateSettings({ tokenPanelCollapsed: !settings.tokenPanelCollapsed })}
-            >
-              <Minimize2 size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-
-        {collapsed ? null : (
-          <div className="cnav-token-body">
-            <div className="cnav-token-total">
-              <strong>{formatTokenCount(tokenStats.total)}</strong>
-              <span>{t.tokenTotal}</span>
-              <small>{tokenStats.modelLabel || t.tokenModelUnknown}</small>
-            </div>
-            <div className="cnav-token-grid">
-              <span>{t.tokenViewport}</span>
-              <strong>{formatTokenCount(tokenStats.viewport)}</strong>
-              <span>{t.tokenBudget}</span>
-              <strong>{`${Math.round(tokenBudgetPercent)}%`}</strong>
-            </div>
-            <div className="cnav-token-progress" aria-hidden="true">
-              <span style={{ width: toPercent(tokenBudgetPercent) }} />
-            </div>
-            <div className="cnav-token-breakdown" aria-label={t.estimatedOnly}>
-              <span style={{ ["--share" as string]: toPercent(userPercent) }}>{t.tokenUserShare}</span>
-              <span style={{ ["--share" as string]: toPercent(assistantPercent) }}>{t.tokenAssistantShare}</span>
-              <span style={{ ["--share" as string]: toPercent(codePercent) }}>{t.tokenCodeShare}</span>
-              <span style={{ ["--share" as string]: toPercent(tablePercent) }}>{t.tokenTableShare}</span>
-            </div>
-            <div className="cnav-token-note">
-              <span>{tokenStats.budgetLabel}</span>
-              <span>{tokenStats.hotMessages > 0 ? `${tokenStats.hotMessages} ${t.tokenHeat}` : t.estimatedOnly}</span>
-            </div>
-            {tokenWarningLevel !== "normal" ? (
-              <div className={`cnav-token-warning is-${tokenWarningLevel}`}>
-                <strong>{tokenWarningLevel === "danger" ? tokenPanelLabels.danger : tokenPanelLabels.warning}</strong>
-                <span>{tokenPanelLabels.trim}</span>
-              </div>
-            ) : null}
-            <details className="cnav-token-details">
-              <summary>{tokenPanelLabels.details}</summary>
-              <div className="cnav-token-detail-list">
-                {tokenDetailEntries.map((entry) => (
-                  <div
-                    className={`cnav-token-detail is-heat-${entry.heatLevel}`}
-                    key={entry.id}
-                  >
-                    <span>
-                      {entry.role === "user" ? tokenPanelLabels.user : tokenPanelLabels.assistant} #{entry.turnIndex}
-                    </span>
-                    <strong>{formatTokenCount(entry.tokenCount)}</strong>
-                    <small>{entry.label}</small>
-                    <em>
-                      {`${tokenPanelLabels.code} ${formatTokenCount(entry.codeTokens)} · ${tokenPanelLabels.table} ${formatTokenCount(entry.tableTokens)}`}
-                    </em>
-                  </div>
-                ))}
-              </div>
-            </details>
-            <div className="cnav-token-scope">{t.tokenVisibleDomOnly}</div>
-          </div>
-        )}
-      </section>
-    );
-  };
-
   return (
     <>
+      <div className="cnav-reading-actions">
+        {!drawerOpen ? (
+          <button
+            className="cnav-reading-launcher"
+            data-theme={theme}
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label={getReadingToolsLabels(settings.language).title}
+            title={getReadingToolsLabels(settings.language).title}
+          >
+            <PanelRightOpen size={19} aria-hidden="true" />
+            <span>{getReadingToolsLabels(settings.language).title}</span>
+          </button>
+        ) : null}
+        {focusMode && !drawerOpen ? (
+          <button className="cnav-focus-exit" data-theme={theme} type="button" onClick={toggleFocusMode}>
+            <Minimize2 size={17} aria-hidden="true" />
+            {getReadingToolsLabels(settings.language).exitFocus}
+          </button>
+        ) : null}
+      </div>
+      {drawerOpen && !drawerDocked ? (
+        <button className="cnav-reading-backdrop" type="button" onClick={() => setDrawerOpen(false)} aria-label="Close" />
+      ) : null}
+      <ReadingToolsDrawer
+        open={drawerOpen}
+        docked={drawerDocked}
+        panel={activeToolPanel}
+        language={settings.language}
+        theme={theme}
+        motionEnabled={settings.uiMotionEnabled}
+        snapshot={selectiveSnapshot}
+        selectedBlockIds={selectedBlockIds}
+        items={items}
+        focusMode={focusMode}
+        activeTurnIndex={activeFocusTurn}
+        readingProgress={readingProgress}
+        citationsChecking={citationsChecking}
+        exportPreferences={exportPreferences}
+        onClose={() => setDrawerOpen(false)}
+        onPanelChange={setActiveToolPanel}
+        onToggleFocus={toggleFocusMode}
+        onChangeTurn={setFocusTurn}
+        onSelectAll={selectAllBlocks}
+        onSelectRole={selectExportRole}
+        onToggleMessage={toggleExportMessage}
+        onToggleBlock={toggleExportBlock}
+        onExportPreferencesChange={updateSelectiveExportPreferences}
+        onExport={exportSelectedBlocks}
+        onCheckCitations={() => void checkAllCitations()}
+        onOpenCitation={openCitation}
+        onCopyCitations={() => void copyCitationList()}
+      />
       {showThreadHandles && resizeFrame ? (
         <>
           {resizePreviewValue !== null ? (
@@ -7137,8 +6995,6 @@ function ConversationNavigator() {
           />
         </>
       ) : null}
-
-      {showFloatingTokenPanel ? renderTokenPanel("hud") : null}
 
       <TableCopyLayer
         theme={theme}

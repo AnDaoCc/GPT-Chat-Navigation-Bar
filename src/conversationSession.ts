@@ -23,6 +23,12 @@ export function hasConversationPromptOverlap(
   return false;
 }
 
-export function isCurrentTokenSession(responseSessionId: string | undefined, currentSessionId: string): boolean {
-  return !responseSessionId || responseSessionId === currentSessionId;
+export function buildConversationStorageKey(
+  hostname: string,
+  conversationId: string | null,
+  tabSessionId: string
+): string {
+  return conversationId
+    ? `${hostname}:conversation:${conversationId}`
+    : `${hostname}:session:${tabSessionId}`;
 }

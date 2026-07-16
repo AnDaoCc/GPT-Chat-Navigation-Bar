@@ -1,25 +1,39 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BookOpen,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ClipboardList,
   Copy,
   Database,
   Download,
   FileText,
-  Gauge,
+  Focus,
+  LayoutGrid,
   Languages,
+  Library,
+  Link2,
+  ListChecks,
+  LockKeyhole,
+  MonitorCog,
   MoveHorizontal,
+  Palette,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
+  Sparkles,
   SlidersHorizontal,
   Trash2,
-  Type
+  Type,
+  UnlockKeyhole
 } from "lucide-react";
 import {
   AppLanguage,
+  DrawerMode,
   DEFAULT_SETTINGS,
   EXPORT_SNAPSHOT_MESSAGE,
   ExportSnapshot,
@@ -27,9 +41,11 @@ import {
   LibraryItem,
   MATERIALS_LIST_MESSAGE,
   NavigatorSettings,
+  PAGE_COMMAND_MESSAGE,
   PAGE_STATUS_MESSAGE,
   PageAdapterHealth,
   PageMaterial,
+  ReadingToolPanel,
   SELECTION_GET_MESSAGE,
   normalizeSettings,
   SelectionMaterial,
@@ -75,20 +91,8 @@ type DisplayNumberSetting =
 
 type CompatStatus = "idle" | "syncing" | "synced" | "failed";
 type PageBridgeStatus = "idle" | "loading" | "ready" | "failed";
-type ExportContentMode = "chat" | "full" | "outline";
-type ExportDocumentFormat = "md" | "html" | "docx";
-
-interface PopupModelBudgetEntry {
-  id: string;
-  label: string;
-  budget: number;
-  aliases?: string[];
-}
-
-interface StoredPopupModelCatalog {
-  updatedAt?: number;
-  models?: unknown[];
-}
+export type ExportContentMode = "chat" | "full" | "outline";
+export type ExportDocumentFormat = "md" | "html" | "docx";
 
 interface StoredPopupCompatRules {
   updatedAt?: number;
@@ -100,48 +104,17 @@ interface StoredPopupCompatRules {
 const OFFICIAL_THREAD_WIDTH = 60;
 const THREAD_WIDTH_MIN = 60;
 const THREAD_WIDTH_MAX = 100;
-const DEFAULT_TOKEN_MODEL_ID = "chatgpt-auto";
-const MODEL_CATALOG_STORAGE_KEY = "conversationNavigator:modelCatalog:v1";
 const COMPAT_RULES_STORAGE_KEY = "conversationNavigator:compatRules:v1";
 const EXPORT_DOCUMENT_FORMAT_STORAGE_KEY = "conversationNavigator:exportFormat:v1";
-const TOKEN_BUDGET_PRESETS = [32000, 128000, 200000, 400000, 1000000, 2000000];
 const EXPORT_CONTENT_MODES: ExportContentMode[] = ["chat", "full", "outline"];
 const EXPORT_DOCUMENT_FORMATS: ExportDocumentFormat[] = ["docx", "html", "md"];
-const POPUP_BUILT_IN_MODEL_BUDGETS: PopupModelBudgetEntry[] = [
-  {
-    id: DEFAULT_TOKEN_MODEL_ID,
-    label: "",
-    budget: 128000,
-    aliases: ["auto", "current model", "chatgpt"]
-  },
-  {
-    id: "gpt-5.5-instant",
-    label: "GPT-5.5 Instant",
-    budget: 32000,
-    aliases: ["gpt-5.5 instant", "gpt 5.5 instant", "instant", "fast"]
-  },
-  {
-    id: "gpt-5.5-thinking",
-    label: "GPT-5.5 Thinking",
-    budget: 256000,
-    aliases: ["gpt-5.5 thinking", "gpt 5.5 thinking", "thinking", "reasoning"]
-  },
-  {
-    id: "gpt-5.5-pro",
-    label: "GPT-5.5 Pro",
-    budget: 400000,
-    aliases: ["gpt-5.5-pro", "gpt-5.5 pro", "gpt 5.5 pro", "pro"]
-  }
-];
 
 function getPopupExtraLabels(language: AppLanguage) {
   if (language === "en") {
     return {
       readingDisplay: "Reading display",
       behavior: "Behavior",
-      tokenSettings: "Token settings",
       preciseValue: "Precise value",
-      enableTokenPanel: "Enable token panel",
       remoteCompat: "Automatically sync compatibility rules",
       syncCompat: "Sync remote rules",
       resetCompat: "Use built-in rules",
@@ -187,9 +160,7 @@ function getPopupExtraLabels(language: AppLanguage) {
     return {
       readingDisplay: "閱讀顯示",
       behavior: "功能行為",
-      tokenSettings: "Token 設定",
       preciseValue: "精準數值",
-      enableTokenPanel: "啟用 Token 面板",
       remoteCompat: "自動同步遠端相容規則",
       syncCompat: "同步遠端規則",
       resetCompat: "使用內建規則",
@@ -234,9 +205,7 @@ function getPopupExtraLabels(language: AppLanguage) {
   return {
     readingDisplay: "阅读显示",
     behavior: "功能行为",
-    tokenSettings: "Token 设置",
     preciseValue: "精准数值",
-    enableTokenPanel: "启用 Token 面板",
     remoteCompat: "自动同步远程兼容规则",
     syncCompat: "同步远程规则",
     resetCompat: "使用内置规则",
@@ -278,85 +247,55 @@ function getPopupExtraLabels(language: AppLanguage) {
   };
 }
 
-function formatBudgetLabel(value: number): string {
-  if (value >= 1000000) {
-    return `${value / 1000000}M`;
+type PopupTab = "tools" | "display" | "library" | "settings";
+
+function getModernPopupLabels(language: AppLanguage) {
+  if (language === "en") {
+    return {
+      tools: "Tools", display: "Display", library: "Library", settings: "Settings",
+      connected: "ChatGPT connected", disconnected: "Open a ChatGPT conversation to use page tools",
+      focusTitle: "Focus reading", focusBody: "Read one question and answer without page distractions.",
+      exportTitle: "Selective export", exportBody: "Choose messages, paragraphs, code, tables, and sources.",
+      citationTitle: "Source manager", citationBody: "Organize, locate, copy, and check visible references.",
+      openTool: "Open", readingAppearance: "Chat typography", canvasAppearance: "Canvas typography",
+      savedLibrary: "Saved materials", pageMaterials: "Current page", general: "General",
+      drawerMode: "Drawer behavior", drawerAuto: "Adaptive", drawerDock: "Always dock", drawerOverlay: "Always overlay",
+      uiMotion: "Interface micro-animations", citationPermission: "Source link access",
+      citationPermissionBody: "Optional access is only used when you click Check links. Requests omit cookies and do not read page bodies.",
+      allowPermission: "Allow checking", revokePermission: "Revoke access", permissionDenied: "Website access was not granted", privacyTitle: "Local by default",
+      version: "2026-V10 Stable"
+    };
   }
-
-  return `${Math.round(value / 1000)}k`;
-}
-
-function formatExportTokenCount(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0";
+  if (language === "zh-TW") {
+    return {
+      tools: "工具", display: "顯示", library: "收藏", settings: "設定",
+      connected: "已連接 ChatGPT", disconnected: "開啟 ChatGPT 對話後可使用頁內工具",
+      focusTitle: "專注閱讀", focusBody: "一次只閱讀一輪問題與回答，暫時收起頁面干擾。",
+      exportTitle: "選擇匯出", exportBody: "精確選擇訊息、段落、代碼、表格與引用。",
+      citationTitle: "引用管理", citationBody: "整理、定位、複製並按需檢查可見來源。",
+      openTool: "開啟", readingAppearance: "聊天排版", canvasAppearance: "Canvas排版",
+      savedLibrary: "已收藏素材", pageMaterials: "目前頁面", general: "一般設定",
+      drawerMode: "側欄顯示方式", drawerAuto: "自動適配", drawerDock: "固定停靠", drawerOverlay: "固定覆蓋",
+      uiMotion: "介面微動畫", citationPermission: "引用連結權限",
+      citationPermissionBody: "僅在你點擊檢查連結時使用可選權限；請求不攜帶Cookie，也不讀取網頁正文。",
+      allowPermission: "允許檢查", revokePermission: "撤銷權限", permissionDenied: "未取得網站檢查權限", privacyTitle: "預設本機處理",
+      version: "2026-V10 正式版"
+    };
   }
-
-  return Math.round(value).toLocaleString();
-}
-
-function normalizePopupModelEntry(value: unknown): PopupModelBudgetEntry | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const model = value as Partial<PopupModelBudgetEntry>;
-  const id = typeof model.id === "string" ? model.id.trim().slice(0, 80) : "";
-  const label = typeof model.label === "string" ? model.label.trim().slice(0, 80) : "";
-  const budget = Number(model.budget);
-  if (!id || !Number.isFinite(budget) || budget < 8000) {
-    return null;
-  }
-
   return {
-    id,
-    label: label || id,
-    budget: Math.round(Math.min(2000000, budget)),
-    aliases: Array.isArray(model.aliases)
-      ? model.aliases.filter((alias): alias is string => typeof alias === "string").slice(0, 12)
-      : []
+    tools: "工具", display: "显示", library: "收藏", settings: "设置",
+    connected: "已连接 ChatGPT", disconnected: "打开 ChatGPT 对话后可使用页内工具",
+    focusTitle: "专注阅读", focusBody: "一次只阅读一轮问题与回答，暂时收起页面干扰。",
+    exportTitle: "选择导出", exportBody: "精确选择消息、段落、代码、表格和引用。",
+    citationTitle: "引用管理", citationBody: "整理、定位、复制并按需检查可见来源。",
+    openTool: "打开", readingAppearance: "聊天排版", canvasAppearance: "Canvas排版",
+    savedLibrary: "已收藏素材", pageMaterials: "当前页面", general: "常规设置",
+    drawerMode: "侧栏显示方式", drawerAuto: "自动适配", drawerDock: "固定停靠", drawerOverlay: "固定覆盖",
+    uiMotion: "界面微动画", citationPermission: "引用链接权限",
+    citationPermissionBody: "仅在你点击检查链接时使用可选权限；请求不携带Cookie，也不读取网页正文。",
+    allowPermission: "允许检查", revokePermission: "撤销权限", permissionDenied: "未获得网站检查权限", privacyTitle: "默认本地处理",
+    version: "2026-V10 正式版"
   };
-}
-
-function mergePopupModelCatalog(models: unknown[]): PopupModelBudgetEntry[] {
-  const byId = new Map<string, PopupModelBudgetEntry>();
-  const ordered: PopupModelBudgetEntry[] = [];
-  const addModel = (model: PopupModelBudgetEntry | null) => {
-    if (!model) {
-      return;
-    }
-
-    const existing = byId.get(model.id);
-    if (existing) {
-      byId.set(model.id, { ...existing, ...model });
-      return;
-    }
-
-    byId.set(model.id, model);
-    ordered.push(model);
-  };
-
-  addModel(POPUP_BUILT_IN_MODEL_BUDGETS[0]);
-  models.map(normalizePopupModelEntry).forEach(addModel);
-  POPUP_BUILT_IN_MODEL_BUDGETS.slice(1).forEach(addModel);
-
-  return ordered.map((model) => byId.get(model.id) ?? model);
-}
-
-function readStoredModelCatalog(): Promise<PopupModelBudgetEntry[]> {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(MODEL_CATALOG_STORAGE_KEY, (result) => {
-      const stored = result[MODEL_CATALOG_STORAGE_KEY] as StoredPopupModelCatalog | undefined;
-      resolve(mergePopupModelCatalog(Array.isArray(stored?.models) ? stored.models : []));
-    });
-  });
-}
-
-function formatModelOptionLabel(model: PopupModelBudgetEntry, autoLabel: string): string {
-  if (model.id === DEFAULT_TOKEN_MODEL_ID) {
-    return autoLabel;
-  }
-
-  return `${model.label} · ${formatBudgetLabel(model.budget)}`;
 }
 
 function normalizePopupText(value: string): string {
@@ -514,7 +453,7 @@ function writePreferredExportDocumentFormat(format: ExportDocumentFormat) {
   }
 }
 
-function downloadExportFile(filename: string, data: string | Uint8Array, mimeType: string) {
+export function downloadExportFile(filename: string, data: string | Uint8Array, mimeType: string) {
   const blobPart: BlobPart = typeof data === "string"
     ? data
     : (() => {
@@ -633,6 +572,15 @@ function getUniqueStandaloneCodeBlocks(snapshot: ExportSnapshot): ExportCodeBloc
 function formatChatOnlyMarkdown(snapshot: ExportSnapshot): string {
   const lines: string[] = [`# ${snapshot.title || "ChatGPT 聊天内容"}`, ""];
   const turns = organizeChatTurns(snapshot);
+  const preferences = snapshot.exportPreferences;
+
+  if (preferences?.includeSourceMeta) lines.push(`- URL: ${snapshot.url}`, "");
+  if (preferences?.includeExportedAt) lines.push(`- Exported: ${new Date(snapshot.exportedAt).toLocaleString()}`, "");
+  if (preferences?.generateToc && turns.length > 0) {
+    lines.push("## 目录", "");
+    for (const turn of turns) lines.push(`- 第 ${turn.index} 轮${turn.user ? `：${turn.user.replace(/\s+/g, " ").slice(0, 60)}` : ""}`);
+    lines.push("");
+  }
 
   if (turns.length === 0) {
     lines.push("_没有识别到可导出的聊天内容。_", "");
@@ -712,8 +660,6 @@ function formatOutlineMarkdown(snapshot: ExportSnapshot): string {
 
     lines.push(`### #${node.turnIndex} ${node.title}`);
     lines.push("");
-    lines.push(`- Tokens: ${formatExportTokenCount(node.totalTokens)} total / ${formatExportTokenCount(node.promptTokens)} prompt / ${formatExportTokenCount(node.answerTokens)} answer`);
-    lines.push("");
     lines.push(`**Prompt**: ${node.promptPreview}`);
     lines.push("");
     lines.push(`**Answer**: ${node.answerSummary || "-"}`);
@@ -744,14 +690,19 @@ function formatHtmlTextBlock(value: string): string {
     .join("\n");
 }
 
-function formatHtmlShell(snapshot: ExportSnapshot, heading: string, body: string, options: { includeMeta?: boolean; chatOnly?: boolean } = {}): string {
+function formatHtmlShell(snapshot: ExportSnapshot, heading: string, body: string, options: { includeMeta?: boolean; includeSourceMeta?: boolean; includeExportedAt?: boolean; chatOnly?: boolean } = {}): string {
   const exportedAt = new Date(snapshot.exportedAt).toLocaleString();
   const includeMeta = options.includeMeta !== false;
+  const includeSourceMeta = options.includeSourceMeta !== false;
+  const includeExportedAt = options.includeExportedAt !== false;
   const mainClass = options.chatOnly ? " class=\"chat-export\"" : "";
-  const metaSection = includeMeta
+  const metaItems = [
+    includeSourceMeta ? `<div><strong>URL:</strong> ${escapeHtml(snapshot.url)}</div>` : "",
+    includeExportedAt ? `<div><strong>Exported:</strong> ${escapeHtml(exportedAt)}</div>` : ""
+  ].filter(Boolean).join("\n      ");
+  const metaSection = includeMeta && metaItems
     ? `    <section class="meta">
-      <div><strong>URL:</strong> ${escapeHtml(snapshot.url)}</div>
-      <div><strong>Exported:</strong> ${escapeHtml(exportedAt)}</div>
+      ${metaItems}
     </section>
 `
     : "";
@@ -801,6 +752,15 @@ ${body}
 function formatChatOnlyHtml(snapshot: ExportSnapshot): string {
   const turns = organizeChatTurns(snapshot);
   const body: string[] = [];
+  const preferences = snapshot.exportPreferences;
+
+  if (preferences?.generateToc && turns.length > 0) {
+    body.push(`    <nav class="export-toc"><h2>目录</h2><ol>`);
+    for (const turn of turns) {
+      body.push(`      <li>第 ${turn.index} 轮${turn.user ? `：${escapeHtml(turn.user.replace(/\s+/g, " ").slice(0, 60))}` : ""}</li>`);
+    }
+    body.push(`    </ol></nav>`);
+  }
 
   if (turns.length === 0) {
     body.push(`    <p class="empty">没有识别到可导出的聊天内容。</p>`);
@@ -825,7 +785,9 @@ function formatChatOnlyHtml(snapshot: ExportSnapshot): string {
   }
 
   return formatHtmlShell(snapshot, snapshot.title || "ChatGPT 聊天内容", body.join("\n"), {
-    includeMeta: false,
+    includeMeta: Boolean(preferences?.includeSourceMeta || preferences?.includeExportedAt),
+    includeSourceMeta: preferences?.includeSourceMeta,
+    includeExportedAt: preferences?.includeExportedAt,
     chatOnly: true
   });
 }
@@ -877,7 +839,6 @@ function formatOutlineHtml(snapshot: ExportSnapshot): string {
 
     body.push(`    <article class="node">`);
     body.push(`      <h3>#${node.turnIndex} ${escapeHtml(node.title)}</h3>`);
-    body.push(`      <p><strong>Tokens:</strong> ${formatExportTokenCount(node.totalTokens)} total / ${formatExportTokenCount(node.promptTokens)} prompt / ${formatExportTokenCount(node.answerTokens)} answer</p>`);
     body.push(`      <p><strong>Prompt:</strong> ${escapeHtml(node.promptPreview)}</p>`);
     body.push(`      <p><strong>Answer:</strong> ${escapeHtml(node.answerSummary || "-")}</p>`);
     body.push(`    </article>`);
@@ -988,9 +949,20 @@ function createDocxStyles(): string {
 
 function formatChatOnlyDocxDocument(snapshot: ExportSnapshot): string {
   const turns = organizeChatTurns(snapshot);
+  const preferences = snapshot.exportPreferences;
   const paragraphs: string[] = [
     docxParagraph(snapshot.title || "ChatGPT 聊天内容", "Title")
   ];
+
+  if (preferences?.includeSourceMeta) paragraphs.push(docxParagraph(`URL: ${snapshot.url}`, "Meta"));
+  if (preferences?.includeExportedAt) paragraphs.push(docxParagraph(`Exported: ${new Date(snapshot.exportedAt).toLocaleString()}`, "Meta"));
+  if (preferences?.generateToc && turns.length > 0) {
+    paragraphs.push(docxParagraph("目录", "Heading1"));
+    for (const turn of turns) {
+      const summary = turn.user ? `：${turn.user.replace(/\s+/g, " ").slice(0, 60)}` : "";
+      paragraphs.push(docxParagraph(`第 ${turn.index} 轮${summary}`));
+    }
+  }
 
   if (turns.length === 0) {
     paragraphs.push(docxParagraph("没有识别到可导出的聊天内容。"));
@@ -1064,7 +1036,6 @@ function formatOutlineDocxDocument(snapshot: ExportSnapshot): string {
     }
 
     paragraphs.push(docxParagraph(`#${node.turnIndex} ${node.title}`, "Heading2"));
-    paragraphs.push(docxParagraph(`Tokens: ${formatExportTokenCount(node.totalTokens)} total / ${formatExportTokenCount(node.promptTokens)} prompt / ${formatExportTokenCount(node.answerTokens)} answer`, "Meta"));
     paragraphs.push(docxParagraph(`Prompt: ${node.promptPreview}`));
     paragraphs.push(docxParagraph(`Answer: ${node.answerSummary || "-"}`));
   }
@@ -1240,7 +1211,7 @@ function createDocxPackage(documentXml: string): Uint8Array {
   ]);
 }
 
-function buildExportDocument(snapshot: ExportSnapshot, mode: ExportContentMode, format: ExportDocumentFormat) {
+export function buildExportDocument(snapshot: ExportSnapshot, mode: ExportContentMode, format: ExportDocumentFormat) {
   const filename = getExportFilename(snapshot, mode, format);
   if (format === "html") {
     return {
@@ -1444,12 +1415,15 @@ export function Popup() {
   const [settings, setSettings] = useState<NavigatorSettings>(DEFAULT_SETTINGS);
   const t = getTranslation(settings.language);
   const extra = getPopupExtraLabels(settings.language);
+  const modern = getModernPopupLabels(settings.language);
+  const [activeTab, setActiveTab] = useState<PopupTab>("tools");
+  const [citationPermissionGranted, setCitationPermissionGranted] = useState(false);
+  const [citationPermissionPending, setCitationPermissionPending] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [compatStatus, setCompatStatus] = useState<CompatStatus>("idle");
   const [compatRuleCount, setCompatRuleCount] = useState(0);
   const [compatMeta, setCompatMeta] = useState<StoredPopupCompatRules>({});
   const [pageHealth, setPageHealth] = useState<PageAdapterHealth | null>(null);
-  const [modelCatalog, setModelCatalog] = useState<PopupModelBudgetEntry[]>(POPUP_BUILT_IN_MODEL_BUDGETS);
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [materials, setMaterials] = useState<PageMaterial[]>([]);
@@ -1459,6 +1433,11 @@ export function Popup() {
   const [exportFormat, setExportFormat] = useState<ExportDocumentFormat>(() => readPreferredExportDocumentFormat());
   const [displayNumberDrafts, setDisplayNumberDrafts] = useState<Partial<Record<DisplayNumberSetting, string>>>({});
   const [displayRangeDrafts, setDisplayRangeDrafts] = useState<Partial<Record<DisplayNumberSetting, number>>>({});
+  const settingsRef = useRef(settings);
+  const settingsSaveCountRef = useRef(0);
+  const compatOperationRef = useRef(0);
+  const compatAbortRef = useRef<AbortController | null>(null);
+  settingsRef.current = settings;
 
   const showLibraryNotice = (message: string) => {
     setLibraryNotice(message);
@@ -1559,15 +1538,14 @@ export function Popup() {
   useEffect(() => {
     async function load() {
       const nextSettings = await readSettings();
+      settingsRef.current = nextSettings;
       setSettings(nextSettings);
-      const [storedCompat, storedModels, storedLibrary] = await Promise.all([
+      const [storedCompat, storedLibrary] = await Promise.all([
         readStoredCompatRules(),
-        readStoredModelCatalog(),
         readLibrary()
       ]);
       setCompatMeta(storedCompat);
       setCompatRuleCount(Array.isArray(storedCompat.rules) ? storedCompat.rules.length : 0);
-      setModelCatalog(storedModels);
       setLibraryItems(storedLibrary);
     }
 
@@ -1579,12 +1557,62 @@ export function Popup() {
     void refreshPageHealth();
   }, []);
 
-  const selectedTokenModelId = useMemo(
-    () => modelCatalog.some((model) => model.id === settings.tokenModelId)
-      ? settings.tokenModelId
-      : DEFAULT_TOKEN_MODEL_ID,
-    [modelCatalog, settings.tokenModelId]
-  );
+  useEffect(() => {
+    void refreshCitationPermission();
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+  }, [settings.language]);
+
+  const openPageTool = async (panel: ReadingToolPanel) => {
+    const response = await sendActiveTabMessage<{ ok?: boolean }>({
+      type: PAGE_COMMAND_MESSAGE,
+      command: "open",
+      panel
+    });
+    if (!response?.ok) {
+      showLibraryNotice(extra.noActiveChat);
+      return;
+    }
+    window.setTimeout(() => window.close(), 80);
+  };
+
+  const refreshCitationPermission = async (): Promise<boolean> => {
+    try {
+      const granted = await chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] });
+      setCitationPermissionGranted(granted);
+      return granted;
+    } catch {
+      setCitationPermissionGranted(false);
+      return false;
+    }
+  };
+
+  const toggleCitationPermission = async () => {
+    if (citationPermissionPending) {
+      return;
+    }
+    setCitationPermissionPending(true);
+    try {
+      const permissions = { origins: ["http://*/*", "https://*/*"] };
+      if (citationPermissionGranted) {
+        await chrome.permissions.remove(permissions);
+      } else {
+        const requested = await chrome.permissions.request(permissions);
+        if (!requested) {
+          showLibraryNotice(modern.permissionDenied);
+        }
+      }
+      await refreshCitationPermission();
+    } catch {
+      await refreshCitationPermission();
+      showLibraryNotice(modern.permissionDenied);
+    } finally {
+      setCitationPermissionPending(false);
+    }
+  };
+
   const activeCompatSource =
     pageHealth?.source ??
     (settings.compatRulesRemoteEnabled ? settings.compatRulesSource : "built-in");
@@ -1606,11 +1634,19 @@ export function Popup() {
   }, [libraryItems, libraryQuery]);
 
   const updateSettings = async (patch: Partial<NavigatorSettings>) => {
-    setIsSaving(true);
-    const nextSettings = normalizeSettings({ ...settings, ...patch });
+    const nextSettings = normalizeSettings({ ...settingsRef.current, ...patch });
+    settingsRef.current = nextSettings;
     setSettings(nextSettings);
-    await writeSettings(nextSettings);
-    setIsSaving(false);
+    settingsSaveCountRef.current += 1;
+    setIsSaving(true);
+    try {
+      await writeSettings(nextSettings);
+    } finally {
+      settingsSaveCountRef.current = Math.max(0, settingsSaveCountRef.current - 1);
+      if (settingsSaveCountRef.current === 0) {
+        setIsSaving(false);
+      }
+    }
   };
 
   const makeDisplayNumberPatch = (setting: DisplayNumberSetting, value: number): Partial<NavigatorSettings> => {
@@ -1622,38 +1658,27 @@ export function Popup() {
     return patch;
   };
 
-  const updateBudgetPreset = (value: string) => {
-    if (value === "model") {
-      updateSettings({ tokenBudgetMode: "model" });
-      return;
-    }
-
-    if (value === "custom") {
-      updateSettings({
-        tokenBudgetMode: "manual",
-        manualTokenBudget: TOKEN_BUDGET_PRESETS.includes(settings.manualTokenBudget)
-          ? 1500000
-          : settings.manualTokenBudget
-      });
-      return;
-    }
-
-    const budget = Number(value);
-    if (Number.isFinite(budget)) {
-      updateSettings({ tokenBudgetMode: "manual", manualTokenBudget: budget });
-    }
-  };
-
   const syncCompatRules = async () => {
+    const operation = compatOperationRef.current + 1;
+    compatOperationRef.current = operation;
+    compatAbortRef.current?.abort();
+    const controller = new AbortController();
+    compatAbortRef.current = controller;
     setCompatStatus("syncing");
     try {
-      const response = await fetch(CHATGPT_COMPAT_RULES_URL, { cache: "no-store" });
+      const response = await fetch(CHATGPT_COMPAT_RULES_URL, { cache: "no-store", signal: controller.signal });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
       const rules = normalizeCompatRulesPayload(await response.json());
+      if (compatOperationRef.current !== operation) {
+        return;
+      }
       await writeStoredCompatRules(rules);
+      if (compatOperationRef.current !== operation) {
+        return;
+      }
       const nextCompatMeta = {
         updatedAt: Date.now(),
         lastAttemptAt: Date.now(),
@@ -1669,17 +1694,27 @@ export function Popup() {
       });
       setCompatStatus("synced");
       window.setTimeout(() => void refreshPageHealth(), 250);
-    } catch {
+    } catch (error) {
+      if (compatOperationRef.current !== operation || (error instanceof DOMException && error.name === "AbortError")) {
+        return;
+      }
       setCompatMeta((current) => ({
         ...current,
         lastAttemptAt: Date.now(),
         lastError: "sync-failed"
       }));
       setCompatStatus("failed");
+    } finally {
+      if (compatOperationRef.current === operation) {
+        compatAbortRef.current = null;
+      }
     }
   };
 
   const resetCompatRules = async () => {
+    compatOperationRef.current += 1;
+    compatAbortRef.current?.abort();
+    compatAbortRef.current = null;
     await removeStoredCompatRules();
     setCompatRuleCount(0);
     setCompatMeta({});
@@ -1748,6 +1783,11 @@ export function Popup() {
       });
     };
     const commitInputValue = (rawValue: string) => {
+      if (!rawValue.trim()) {
+        clearDraft();
+        clearRangeDraft();
+        return;
+      }
       const parsed = Number(rawValue);
       if (Number.isFinite(parsed)) {
         commitValue(parsed);
@@ -1861,493 +1901,144 @@ export function Popup() {
     );
   };
 
+  const pageConnected = pageBridgeStatus === "ready" && pageHealth !== null && pageHealth.status !== "unsupported";
+  const tabs: Array<{ id: PopupTab; label: string; icon: React.ReactNode }> = [
+    { id: "tools", label: modern.tools, icon: <LayoutGrid size={17} aria-hidden="true" /> },
+    { id: "display", label: modern.display, icon: <Palette size={17} aria-hidden="true" /> },
+    { id: "library", label: modern.library, icon: <Library size={17} aria-hidden="true" /> },
+    { id: "settings", label: modern.settings, icon: <Settings size={17} aria-hidden="true" /> }
+  ];
+
+  const toolCards: Array<{ panel: ReadingToolPanel; title: string; body: string; icon: React.ReactNode; tone: string }> = [
+    { panel: "focus", title: modern.focusTitle, body: modern.focusBody, icon: <Focus size={20} aria-hidden="true" />, tone: "focus" },
+    { panel: "export", title: modern.exportTitle, body: modern.exportBody, icon: <ListChecks size={20} aria-hidden="true" />, tone: "export" },
+    { panel: "citations", title: modern.citationTitle, body: modern.citationBody, icon: <Link2 size={20} aria-hidden="true" />, tone: "citation" }
+  ];
+
   return (
-    <main className="popup-shell">
-      <header className="popup-header">
-        <div className="popup-mark">
-          <Database size={20} aria-hidden="true" />
-        </div>
-        <div>
-          <h1>{t.appName}</h1>
-          <p>{t.popupSubtitle}</p>
-        </div>
+    <main className={`popup-shell${settings.uiMotionEnabled ? "" : " is-static"}`}>
+      <header className="popup-header-modern">
+        <span className="popup-brand-mark"><Sparkles size={21} aria-hidden="true" /></span>
+        <div className="popup-brand-copy"><h1>{t.appName}</h1><p>{modern.version}{isSaving ? ` · ${t.saving}` : ""}</p></div>
+        <span className={`popup-connection-dot${pageConnected ? " is-online" : ""}`} title={pageConnected ? modern.connected : modern.disconnected} />
       </header>
 
-      <section className="popup-privacy">
-        <ShieldCheck size={18} aria-hidden="true" />
-        <p>{t.privacy}</p>
-      </section>
-
-      <CollapsibleSection
-        title={extra.library}
-        icon={<ClipboardList size={17} aria-hidden="true" />}
-        badge={`${libraryItems.length} ${extra.libraryCount}`}
-        ariaLabel="Local library"
-      >
-        <label className="popup-field">
-          <span>
-            <Search size={13} aria-hidden="true" />
-            {extra.searchLibrary}
-          </span>
-          <input
-            value={libraryQuery}
-            onChange={(event) => setLibraryQuery(event.currentTarget.value)}
-            spellCheck={false}
-          />
-        </label>
-        {libraryNotice ? <p className="popup-inline-status">{libraryNotice}</p> : null}
-        <div className="popup-library-list">
-          {filteredLibraryItems.length === 0 ? (
-            <p className="popup-empty">{extra.noLibraryItems}</p>
-          ) : (
-            filteredLibraryItems.map((item) => (
-              <article className="popup-library-item" key={item.id}>
-                <div className="popup-library-main">
-                  <span>{getLibraryKindLabel(item.kind, extra)}</span>
-                  <strong>{item.title}</strong>
-                  <small>
-                    {`${item.filename || item.sourceTitle || item.sourceUrl || "-"} · ${new Date(item.updatedAt).toLocaleDateString()}`}
-                  </small>
-                  <p>{normalizePopupText(item.text).slice(0, 160)}</p>
-                </div>
-                <div className="popup-library-actions">
-                  <button
-                    className="popup-record-delete is-copy"
-                    type="button"
-                    onClick={() => void copyLibraryItem(item)}
-                    title={extra.copy}
-                  >
-                    <Copy size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="popup-record-delete"
-                    type="button"
-                    onClick={() => void deleteLibraryItem(item.id)}
-                    title={extra.delete}
-                  >
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              </article>
-            ))
-          )}
-        </div>
-        <button
-          className="popup-clear"
-          type="button"
-          onClick={() => void clearLibrary()}
-          disabled={libraryItems.length === 0}
-        >
-          <Trash2 size={16} aria-hidden="true" />
-          {extra.clearLibrary}
-        </button>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={extra.currentMaterials}
-        icon={<FileText size={17} aria-hidden="true" />}
-        badge={`${materials.length} ${extra.libraryCount}`}
-        ariaLabel="Current page materials"
-      >
-        <div className="popup-action-row">
+      <nav className="popup-tab-nav" aria-label={t.appName} role="tablist">
+        {tabs.map((tab) => (
           <button
-            className="popup-secondary"
             type="button"
-            onClick={() => void refreshMaterials()}
-            disabled={pageBridgeStatus === "loading"}
+            className={activeTab === tab.id ? "is-active" : ""}
+            id={`popup-tab-${tab.id}`}
+            role="tab"
+            aria-controls={`popup-panel-${tab.id}`}
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            key={tab.id}
           >
-            <RefreshCw size={15} aria-hidden="true" />
-            {extra.refreshMaterials}
+            {tab.icon}<span>{tab.label}</span>
           </button>
-          <button className="popup-secondary" type="button" onClick={() => void saveSelectedText()}>
-            <Plus size={15} aria-hidden="true" />
-            {extra.collectSelection}
-          </button>
-        </div>
-        {pageBridgeStatus === "failed" ? <p className="popup-empty">{extra.noActiveChat}</p> : null}
-        <div className="popup-library-list">
-          {materials.length === 0 ? (
-            <p className="popup-empty">{extra.noMaterials}</p>
-          ) : (
-            materials.map((material) => (
-              <article className="popup-library-item" key={material.id}>
-                <div className="popup-library-main">
-                  <span>{material.kind === "prompt" ? extra.promptKind : extra.codeKind}</span>
-                  <strong>{material.title}</strong>
-                  <small>{material.filename || material.sourceTitle || material.sourceUrl}</small>
-                  <p>{normalizePopupText(material.text).slice(0, 160)}</p>
-                </div>
-                <button
-                  className="popup-record-delete is-save"
-                  type="button"
-                  onClick={() => void saveMaterialToLibrary(material)}
-                  title={extra.addToLibrary}
-                >
-                  <Plus size={14} aria-hidden="true" />
-                </button>
-              </article>
-            ))
-          )}
-        </div>
-      </CollapsibleSection>
+        ))}
+      </nav>
 
-      <CollapsibleSection
-        title={extra.markdownExport}
-        icon={<Download size={17} aria-hidden="true" />}
-        badge={`${getExportContentModeLabel(exportContentMode, extra)} · ${getExportFormatLabel(exportFormat, extra)}`}
-        ariaLabel="Document export"
-      >
-        <label className="popup-field">
-          <span>
-            <ClipboardList size={13} aria-hidden="true" />
-            {extra.exportContent}
-          </span>
-          <select
-            value={exportContentMode}
-            onChange={(event) => {
-              const nextMode = event.currentTarget.value;
-              if (isExportContentMode(nextMode)) {
-                setExportContentMode(nextMode);
-              }
-            }}
-          >
-            {EXPORT_CONTENT_MODES.map((mode) => (
-              <option value={mode} key={mode}>
-                {getExportContentModeLabel(mode, extra)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="popup-field">
-          <span>
-            <FileText size={13} aria-hidden="true" />
-            {extra.exportFormat}
-          </span>
-          <select
-            value={exportFormat}
-            onChange={(event) => {
-              const nextFormat = event.currentTarget.value;
-              if (isExportDocumentFormat(nextFormat)) {
-                updateExportFormat(nextFormat);
-              }
-            }}
-          >
-            {EXPORT_DOCUMENT_FORMATS.map((format) => (
-              <option value={format} key={format}>
-                {getExportFormatLabel(format, extra)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="popup-action-row">
-          <button className="popup-secondary" type="button" onClick={() => void exportDocument()}>
-            <Download size={15} aria-hidden="true" />
-            {extra.exportDocument}
-          </button>
-        </div>
-        <p>{pageBridgeStatus === "failed" ? extra.noActiveChat : extra.exportNote}</p>
-      </CollapsibleSection>
+      {libraryNotice ? <div className="popup-toast" role="status" aria-live="polite"><CheckCircle2 size={15} aria-hidden="true" />{libraryNotice}</div> : null}
 
-      <CollapsibleSection
-        title={extra.readingDisplay}
-        icon={<SlidersHorizontal size={17} aria-hidden="true" />}
-        badge={isSaving ? t.saving : null}
-        ariaLabel="Display settings"
+      <div
+        className="popup-tab-content"
+        id={`popup-panel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`popup-tab-${activeTab}`}
+        key={activeTab}
       >
-        {renderTypographyPreview("chat")}
-        <div className="popup-range-group">
-          {renderDisplayRange({
-            label: t.fontSize,
-            setting: "chatFontScale",
-            min: 85,
-            max: 220,
-            step: 1,
-            unit: "%",
-            resetValue: 100
-          })}
-          {renderDisplayRange({
-            label: t.letterSpacing,
-            setting: "chatLetterSpacing",
-            min: 0,
-            max: 8,
-            step: 0.1,
-            unit: "px",
-            resetValue: 0
-          })}
-          {renderDisplayRange({
-            label: t.lineSpacing,
-            setting: "chatLineHeight",
-            min: 125,
-            max: 220,
-            step: 1,
-            unit: "%",
-            resetValue: 155
-          })}
-          {renderDisplayRange({
-            label: t.contentWidth,
-            setting: "chatContentWidth",
-            min: THREAD_WIDTH_MIN,
-            max: THREAD_WIDTH_MAX,
-            step: 1,
-            unit: "%",
-            resetValue: OFFICIAL_THREAD_WIDTH
-          })}
-          <label className="popup-toggle">
-            <span>{extra.widthHandle}</span>
-            <input
-              type="checkbox"
-              checked={settings.threadResizeEnabled}
-              onChange={(event) => updateSettings({ threadResizeEnabled: event.currentTarget.checked })}
-            />
-          </label>
-        </div>
-        <button
-          className="popup-secondary"
-          type="button"
-          onClick={() =>
-            updateSettings({
-              chatLayoutVersion: 2,
-              chatContentWidth: OFFICIAL_THREAD_WIDTH
-            })
-          }
-        >
-          <MoveHorizontal size={15} aria-hidden="true" />
-          {t.officialWidthReset}
-        </button>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={t.canvasDisplay}
-        icon={<Type size={17} aria-hidden="true" />}
-        ariaLabel="Canvas display settings"
-      >
-        {renderTypographyPreview("canvas")}
-        <div className="popup-range-group">
-          <label className="popup-toggle">
-            <span>{extra.canvasWidthControl}</span>
-            <input
-              type="checkbox"
-              checked={settings.canvasWidthEnabled}
-              onChange={(event) => updateSettings({ canvasWidthEnabled: event.currentTarget.checked })}
-            />
-          </label>
-          {renderDisplayRange({
-            label: t.contentWidth,
-            setting: "canvasContentWidth",
-            min: THREAD_WIDTH_MIN,
-            max: THREAD_WIDTH_MAX,
-            step: 1,
-            unit: "%",
-            resetValue: OFFICIAL_THREAD_WIDTH
-          })}
-          {renderDisplayRange({
-            label: t.fontSize,
-            setting: "canvasFontScale",
-            min: 75,
-            max: 220,
-            step: 1,
-            unit: "%",
-            resetValue: 100
-          })}
-          {renderDisplayRange({
-            label: t.letterSpacing,
-            setting: "canvasLetterSpacing",
-            min: 0,
-            max: 8,
-            step: 0.1,
-            unit: "px",
-            resetValue: 0
-          })}
-          {renderDisplayRange({
-            label: t.lineSpacing,
-            setting: "canvasLineHeight",
-            min: 120,
-            max: 230,
-            step: 1,
-            unit: "%",
-            resetValue: 155
-          })}
-        </div>
-        {settings.canvasWidthEnabled || settings.canvasContentWidth !== OFFICIAL_THREAD_WIDTH ? (
-          <button
-            className="popup-secondary"
-            type="button"
-            onClick={() =>
-              updateSettings({
-                canvasWidthEnabled: false,
-                chatLayoutVersion: 2,
-                canvasContentWidth: OFFICIAL_THREAD_WIDTH
-              })
-            }
-          >
-            <MoveHorizontal size={15} aria-hidden="true" />
-            {extra.canvasOfficialWidth}
-          </button>
-        ) : null}
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={extra.behavior}
-        icon={<CheckCircle2 size={17} aria-hidden="true" />}
-        badge={isSaving ? t.saving : null}
-        ariaLabel="Behavior settings"
-      >
-        <label className="popup-field">
-          <span>
-            <Languages size={13} aria-hidden="true" />
-            {t.language}
-          </span>
-          <select
-            value={settings.language}
-            onChange={(event) =>
-              updateSettings({ language: event.currentTarget.value as AppLanguage })
-            }
-          >
-            {(Object.keys(LANGUAGE_NAMES) as AppLanguage[]).map((language) => (
-              <option value={language} key={language}>
-                {LANGUAGE_NAMES[language]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="popup-toggle">
-          <span>{t.navigateAnimation}</span>
-          <input
-            type="checkbox"
-            checked={settings.navigateAnimationEnabled}
-            onChange={(event) => updateSettings({ navigateAnimationEnabled: event.currentTarget.checked })}
-          />
-        </label>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={extra.tokenSettings}
-        icon={<Gauge size={17} aria-hidden="true" />}
-        badge={settings.tokenPanelEnabled ? extra.enabled : extra.disabled}
-        ariaLabel="Token settings"
-      >
-        <label className="popup-toggle">
-          <span>{extra.enableTokenPanel}</span>
-          <input
-            type="checkbox"
-            checked={settings.tokenPanelEnabled}
-            onChange={(event) => updateSettings({ tokenPanelEnabled: event.currentTarget.checked })}
-          />
-        </label>
-        <label className="popup-field">
-          <span>{t.tokenBudget}</span>
-          <select
-            value={
-              settings.tokenBudgetMode === "model"
-                ? "model"
-                : TOKEN_BUDGET_PRESETS.includes(settings.manualTokenBudget)
-                  ? String(settings.manualTokenBudget)
-                  : "custom"
-            }
-            onChange={(event) => updateBudgetPreset(event.currentTarget.value)}
-          >
-            <option value="model">{t.tokenBudgetAuto}</option>
-            {TOKEN_BUDGET_PRESETS.map((budget) => (
-              <option value={budget} key={budget}>
-                {formatBudgetLabel(budget)}
-              </option>
-            ))}
-            <option value="custom">{t.tokenBudgetCustom}</option>
-          </select>
-        </label>
-        {settings.tokenBudgetMode === "model" ? (
-          <label className="popup-field">
-            <span>{t.tokenModel}</span>
-            <select
-              value={selectedTokenModelId}
-              onChange={(event) =>
-                updateSettings({
-                  tokenBudgetMode: "model",
-                  tokenModelId: event.currentTarget.value
-                })
-              }
-            >
-              {modelCatalog.map((model) => (
-                <option value={model.id} key={model.id}>
-                  {formatModelOptionLabel(model, t.tokenModelAuto)}
-                </option>
+        {activeTab === "tools" ? (
+          <section className="popup-modern-page">
+            <div className={`popup-status-card${pageConnected ? " is-connected" : ""}`}>
+              <span>{pageConnected ? <CheckCircle2 size={18} aria-hidden="true" /> : <PanelRightOpen size={18} aria-hidden="true" />}</span>
+              <div><strong>{pageConnected ? modern.connected : modern.disconnected}</strong><small>{pageHealth ? `${pageHealth.messageCount} messages · ${pageHealth.status}` : t.popupSubtitle}</small></div>
+            </div>
+            <div className="popup-tool-grid">
+              {toolCards.map((tool) => (
+                <article className={`popup-tool-card is-${tool.tone}`} key={tool.panel}>
+                  <span>{tool.icon}</span>
+                  <div><strong>{tool.title}</strong><p>{tool.body}</p></div>
+                  <button type="button" onClick={() => void openPageTool(tool.panel)} disabled={!pageConnected}>{modern.openTool}<ChevronRight size={15} aria-hidden="true" /></button>
+                </article>
               ))}
-            </select>
-          </label>
+            </div>
+            <div className="popup-privacy-modern"><ShieldCheck size={18} aria-hidden="true" /><div><strong>{modern.privacyTitle}</strong><p>{t.privacy}</p></div></div>
+          </section>
         ) : null}
-        {settings.tokenBudgetMode === "manual" && !TOKEN_BUDGET_PRESETS.includes(settings.manualTokenBudget) ? (
-          <label className="popup-field">
-            <span>{t.tokenManualBudget}</span>
-            <input
-              type="number"
-              min="8000"
-              max="2000000"
-              step="1000"
-              value={settings.manualTokenBudget}
-              onChange={(event) => updateSettings({ manualTokenBudget: Number(event.currentTarget.value) })}
-            />
-          </label>
+
+        {activeTab === "display" ? (
+          <section className="popup-modern-page">
+            <article className="popup-modern-section">
+              <header><span><SlidersHorizontal size={18} aria-hidden="true" /></span><div><strong>{modern.readingAppearance}</strong><small>{extra.readingDisplay}</small></div></header>
+              {renderTypographyPreview("chat")}
+              <div className="popup-range-group">
+                {renderDisplayRange({ label: t.fontSize, setting: "chatFontScale", min: 85, max: 220, step: 1, unit: "%", resetValue: 100 })}
+                {renderDisplayRange({ label: t.letterSpacing, setting: "chatLetterSpacing", min: 0, max: 8, step: 0.1, unit: "px", resetValue: 0 })}
+                {renderDisplayRange({ label: t.lineSpacing, setting: "chatLineHeight", min: 125, max: 220, step: 1, unit: "%", resetValue: 155 })}
+                {renderDisplayRange({ label: t.contentWidth, setting: "chatContentWidth", min: THREAD_WIDTH_MIN, max: THREAD_WIDTH_MAX, step: 1, unit: "%", resetValue: OFFICIAL_THREAD_WIDTH })}
+              </div>
+              <label className="popup-toggle"><span>{extra.widthHandle}</span><input type="checkbox" checked={settings.threadResizeEnabled} onChange={(event) => updateSettings({ threadResizeEnabled: event.currentTarget.checked })} /></label>
+              <button className="popup-secondary" type="button" onClick={() => updateSettings({ chatLayoutVersion: 2, chatContentWidth: OFFICIAL_THREAD_WIDTH })}><MoveHorizontal size={15} aria-hidden="true" />{t.officialWidthReset}</button>
+            </article>
+            <article className="popup-modern-section">
+              <header><span><Type size={18} aria-hidden="true" /></span><div><strong>{modern.canvasAppearance}</strong><small>{t.canvasDisplay}</small></div></header>
+              {renderTypographyPreview("canvas")}
+              <label className="popup-toggle"><span>{extra.canvasWidthControl}</span><input type="checkbox" checked={settings.canvasWidthEnabled} onChange={(event) => updateSettings({ canvasWidthEnabled: event.currentTarget.checked })} /></label>
+              <div className="popup-range-group">
+                {renderDisplayRange({ label: t.contentWidth, setting: "canvasContentWidth", min: THREAD_WIDTH_MIN, max: THREAD_WIDTH_MAX, step: 1, unit: "%", resetValue: OFFICIAL_THREAD_WIDTH })}
+                {renderDisplayRange({ label: t.fontSize, setting: "canvasFontScale", min: 75, max: 220, step: 1, unit: "%", resetValue: 100 })}
+                {renderDisplayRange({ label: t.letterSpacing, setting: "canvasLetterSpacing", min: 0, max: 8, step: 0.1, unit: "px", resetValue: 0 })}
+                {renderDisplayRange({ label: t.lineSpacing, setting: "canvasLineHeight", min: 120, max: 230, step: 1, unit: "%", resetValue: 155 })}
+              </div>
+            </article>
+          </section>
         ) : null}
-      </CollapsibleSection>
 
-      <CollapsibleSection
-        title={t.compatRules}
-        icon={<Database size={17} aria-hidden="true" />}
-        badge={`${compatRuleCount} ${t.compatRulesCount}`}
-        ariaLabel="Compatibility settings"
-      >
-        <label className="popup-toggle">
-          <span>{extra.remoteCompat}</span>
-          <input
-            type="checkbox"
-            checked={settings.compatRulesAutoSyncEnabled}
-            onChange={(event) => {
-              if (event.currentTarget.checked) {
-                void syncCompatRules();
-              } else {
-                void resetCompatRules();
-              }
-            }}
-          />
-        </label>
-        <div className="popup-action-row">
-          <button
-            className="popup-secondary"
-            type="button"
-            onClick={() => void syncCompatRules()}
-            disabled={compatStatus === "syncing"}
-          >
-            {compatStatus === "syncing" ? t.compatRulesSyncing : extra.syncCompat}
-          </button>
-          <button className="popup-secondary" type="button" onClick={() => void resetCompatRules()}>
-            {extra.resetCompat}
-          </button>
-        </div>
-        <div className="popup-compat-status">
-          <span>
-            {settings.language === "en" ? "Active" : "当前"}:
-            {" "}
-            {activeCompatSource === "remote"
-              ? (settings.language === "en" ? "remote rule" : "远程规则")
-              : (settings.language === "en" ? "built-in rule" : "内置规则")}
-          </span>
-          <span>
-            {settings.language === "en" ? "Health" : "健康状态"}:
-            {" "}
-            {pageHealth?.status ?? "unknown"}
-          </span>
-          <span>
-            {settings.language === "en" ? "Last sync" : "最后同步"}:
-            {" "}
-            {compatMeta.updatedAt ? new Date(compatMeta.updatedAt).toLocaleString() : "-"}
-          </span>
-          {compatMeta.lastError ? (
-            <span className="is-error">{settings.language === "en" ? "Last sync failed" : "最近同步失败，继续使用已有规则"}</span>
-          ) : null}
-        </div>
-        <p>{t.compatRulesNote}</p>
-      </CollapsibleSection>
+        {activeTab === "library" ? (
+          <section className="popup-modern-page">
+            <article className="popup-modern-section popup-library-section">
+              <header><span><ClipboardList size={18} aria-hidden="true" /></span><div><strong>{modern.savedLibrary}</strong><small>{libraryItems.length} {extra.libraryCount}</small></div></header>
+              <label className="popup-search-modern"><Search size={15} aria-hidden="true" /><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.currentTarget.value)} placeholder={extra.searchLibrary} /></label>
+              <div className="popup-library-list">
+                {filteredLibraryItems.length === 0 ? <p className="popup-empty">{extra.noLibraryItems}</p> : filteredLibraryItems.map((item) => (
+                  <article className="popup-library-item" key={item.id}><div className="popup-library-main"><span>{getLibraryKindLabel(item.kind, extra)}</span><strong>{item.title}</strong><small>{item.filename || item.sourceTitle || item.sourceUrl || "-"}</small><p>{normalizePopupText(item.text).slice(0, 160)}</p></div><div className="popup-library-actions"><button className="popup-record-delete is-copy" type="button" aria-label={extra.copy} title={extra.copy} onClick={() => void copyLibraryItem(item)}><Copy size={14} aria-hidden="true" /></button><button className="popup-record-delete" type="button" aria-label={extra.delete} title={extra.delete} onClick={() => void deleteLibraryItem(item.id)}><Trash2 size={14} aria-hidden="true" /></button></div></article>
+                ))}
+              </div>
+              <button className="popup-clear" type="button" onClick={() => void clearLibrary()} disabled={libraryItems.length === 0}><Trash2 size={15} aria-hidden="true" />{extra.clearLibrary}</button>
+            </article>
+            <article className="popup-modern-section popup-library-section">
+              <header><span><FileText size={18} aria-hidden="true" /></span><div><strong>{modern.pageMaterials}</strong><small>{materials.length} {extra.libraryCount}</small></div></header>
+              <div className="popup-action-row"><button className="popup-secondary" type="button" onClick={() => void refreshMaterials()} disabled={!pageConnected}><RefreshCw size={15} aria-hidden="true" />{extra.refreshMaterials}</button><button className="popup-secondary" type="button" onClick={() => void saveSelectedText()} disabled={!pageConnected}><Plus size={15} aria-hidden="true" />{extra.collectSelection}</button></div>
+              <div className="popup-library-list">{materials.length === 0 ? <p className="popup-empty">{extra.noMaterials}</p> : materials.map((material) => <article className="popup-library-item" key={material.id}><div className="popup-library-main"><span>{material.kind === "prompt" ? extra.promptKind : extra.codeKind}</span><strong>{material.title}</strong><small>{material.filename || material.sourceTitle || material.sourceUrl}</small><p>{normalizePopupText(material.text).slice(0, 160)}</p></div><button className="popup-record-delete is-save" type="button" aria-label={extra.addToLibrary} title={extra.addToLibrary} onClick={() => void saveMaterialToLibrary(material)}><Plus size={14} aria-hidden="true" /></button></article>)}</div>
+            </article>
+          </section>
+        ) : null}
 
+        {activeTab === "settings" ? (
+          <section className="popup-modern-page">
+            <article className="popup-modern-section">
+              <header><span><MonitorCog size={18} aria-hidden="true" /></span><div><strong>{modern.general}</strong><small>{t.displaySettings}</small></div></header>
+              <label className="popup-field"><span><Languages size={13} aria-hidden="true" />{t.language}</span><select value={settings.language} onChange={(event) => updateSettings({ language: event.currentTarget.value as AppLanguage })}>{(Object.keys(LANGUAGE_NAMES) as AppLanguage[]).map((language) => <option value={language} key={language}>{LANGUAGE_NAMES[language]}</option>)}</select></label>
+              <label className="popup-field"><span><PanelRightOpen size={13} aria-hidden="true" />{modern.drawerMode}</span><select value={settings.drawerMode} onChange={(event) => updateSettings({ drawerMode: event.currentTarget.value as DrawerMode })}><option value="auto">{modern.drawerAuto}</option><option value="dock">{modern.drawerDock}</option><option value="overlay">{modern.drawerOverlay}</option></select></label>
+              <label className="popup-toggle"><span>{modern.uiMotion}</span><input type="checkbox" checked={settings.uiMotionEnabled} onChange={(event) => updateSettings({ uiMotionEnabled: event.currentTarget.checked })} /></label>
+              <label className="popup-toggle"><span>{t.navigateAnimation}</span><input type="checkbox" checked={settings.navigateAnimationEnabled} onChange={(event) => updateSettings({ navigateAnimationEnabled: event.currentTarget.checked })} /></label>
+            </article>
+            <article className="popup-modern-section popup-permission-card">
+              <header><span>{citationPermissionGranted ? <UnlockKeyhole size={18} aria-hidden="true" /> : <LockKeyhole size={18} aria-hidden="true" />}</span><div><strong>{modern.citationPermission}</strong><small>{citationPermissionGranted ? extra.enabled : extra.disabled}</small></div></header>
+              <p>{modern.citationPermissionBody}</p>
+              <button className={`popup-secondary${citationPermissionGranted ? " is-danger" : ""}`} type="button" onClick={() => void toggleCitationPermission()} disabled={citationPermissionPending}>{citationPermissionGranted ? <LockKeyhole size={15} aria-hidden="true" /> : <UnlockKeyhole size={15} aria-hidden="true" />}{citationPermissionGranted ? modern.revokePermission : modern.allowPermission}</button>
+            </article>
+            <article className="popup-modern-section">
+              <header><span><Database size={18} aria-hidden="true" /></span><div><strong>{t.compatRules}</strong><small>{compatRuleCount} {t.compatRulesCount}</small></div></header>
+              <label className="popup-toggle"><span>{extra.remoteCompat}</span><input type="checkbox" checked={settings.compatRulesAutoSyncEnabled} disabled={compatStatus === "syncing"} onChange={(event) => event.currentTarget.checked ? void syncCompatRules() : void resetCompatRules()} /></label>
+              <div className="popup-action-row"><button className="popup-secondary" type="button" onClick={() => void syncCompatRules()} disabled={compatStatus === "syncing"}>{compatStatus === "syncing" ? t.compatRulesSyncing : extra.syncCompat}</button><button className="popup-secondary" type="button" onClick={() => void resetCompatRules()} disabled={compatStatus === "syncing"}>{extra.resetCompat}</button></div>
+              <div className="popup-compat-status"><span>{settings.language === "en" ? "Active" : "当前"}: {activeCompatSource === "remote" ? (settings.language === "en" ? "remote" : "远程规则") : (settings.language === "en" ? "built-in" : "内置规则")}</span><span>{settings.language === "en" ? "Health" : "健康状态"}: {pageHealth?.status ?? "unknown"}</span><span>{settings.language === "en" ? "Last sync" : "最后同步"}: {compatMeta.updatedAt ? new Date(compatMeta.updatedAt).toLocaleString() : "-"}</span>{compatMeta.lastError ? <span className="is-error">{settings.language === "en" ? "Last sync failed" : "最近同步失败"}</span> : null}</div>
+            </article>
+          </section>
+        ) : null}
+      </div>
     </main>
   );
 }

@@ -23,7 +23,6 @@ export interface AdapterHealth {
   userCount: number;
   assistantCount: number;
   canAnchor: boolean;
-  tokenTextAvailable: boolean;
   source: CompatRulesSource;
 }
 
@@ -34,18 +33,23 @@ export interface ChatGptDomRule {
   source: CompatRulesSource;
   messageSelectors: string[];
   turnSelectors: string[];
-  modelSelectors: string[];
   supplementalSelectors: string[];
   supplementalExcludeSelectors: string[];
   textControlSelectors: string[];
   textIgnoredSelectors: string[];
   userHints: string[];
   assistantHints: string[];
+  layoutSelectors?: {
+    sidebar: string[];
+    composer: string[];
+    header: string[];
+  };
+  citationSelectors?: string[];
   fallbackRoleByOrder?: boolean;
 }
 
 export interface ChatGptCompatRulesPayload {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   rules: Partial<ChatGptDomRule>[];
 }
 
@@ -60,7 +64,6 @@ export interface ChatGptAdapter {
   label: string;
   matches: (host: string) => boolean;
   collect: () => ChatGptCollectResult;
-  detectModelLabel: () => string;
 }
 
 const ROOT_ID = "conversation-navigator-root";
@@ -77,17 +80,29 @@ const CHATGPT_ROLE_ATTRIBUTES = [
   "data-turn"
 ] as const;
 
+export const CHATGPT_USER_MESSAGE_NODE_SELECTOR = [
+  '[data-message-author-role="user"]',
+  '[data-author-role="user"]',
+  '[data-author="user"]',
+  '[data-role="user"]',
+  '[data-turn="user"]',
+  '[data-testid="user-message"]'
+].join(",");
+
+export const CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR = [
+  '[data-message-author-role="assistant"]',
+  '[data-author-role="assistant"]',
+  '[data-author="assistant"]',
+  '[data-role="assistant"]',
+  '[data-turn="assistant"]',
+  '[data-testid="assistant-message"]'
+].join(",");
+
 export const CHATGPT_MESSAGE_NODE_SELECTOR = [
   "[data-message-author-role]",
   "[data-author-role]",
-  '[data-author="user"]',
-  '[data-author="assistant"]',
-  '[data-role="user"]',
-  '[data-role="assistant"]',
-  '[data-turn="user"]',
-  '[data-turn="assistant"]',
-  '[data-testid="user-message"]',
-  '[data-testid="assistant-message"]'
+  CHATGPT_USER_MESSAGE_NODE_SELECTOR,
+  CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR
 ].join(",");
 
 export const CHATGPT_TURN_NODE_SELECTOR = [
@@ -129,6 +144,33 @@ const DEFAULT_TEXT_IGNORED_SELECTORS = [
   '[class*="toolbar" i]'
 ];
 
+export const CHATGPT_SIDEBAR_SELECTORS = [
+  'nav[aria-label*="Chat" i]',
+  'aside[data-testid*="sidebar" i]',
+  '[data-testid*="sidebar" i]',
+  '[class*="sidebar" i]'
+];
+
+export const CHATGPT_COMPOSER_SELECTORS = [
+  'form[data-type="unified-composer"]',
+  '[data-testid*="composer" i]',
+  '#prompt-textarea',
+  'form:has(#prompt-textarea)'
+];
+
+export const CHATGPT_HEADER_SELECTORS = [
+  'header[data-testid*="header" i]',
+  'main#main > header',
+  '[data-testid="model-switcher-dropdown-button"]'
+];
+
+export const CHATGPT_CITATION_SELECTORS = [
+  'a[href^="http://"]',
+  'a[href^="https://"]',
+  '[data-testid*="citation" i] a[href]',
+  '[data-testid*="source" i] a[href]'
+];
+
 const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
   id: "chatgpt-current-2026-07",
   label: "ChatGPT current DOM",
@@ -159,16 +201,6 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
     'main [data-message-author-role]',
     'article[data-testid*="conversation-turn" i]',
     '[data-testid*="conversation-turn" i]'
-  ],
-  modelSelectors: [
-    '[data-testid*="model" i]',
-    '[aria-label*="model" i]',
-    '[aria-label*="GPT" i]',
-    "main form button",
-    "form button",
-    "header button",
-    "button",
-    '[role="button"]'
   ],
   supplementalSelectors: [
     '[data-testid*="canvas" i]',
@@ -233,6 +265,12 @@ const CURRENT_CHATGPT_RULE: ChatGptDomRule = {
   textIgnoredSelectors: DEFAULT_TEXT_IGNORED_SELECTORS,
   userHints: ["user", "human", "prompt", "query", "request"],
   assistantHints: ["assistant", "model", "response", "answer", "chatgpt"],
+  layoutSelectors: {
+    sidebar: CHATGPT_SIDEBAR_SELECTORS,
+    composer: CHATGPT_COMPOSER_SELECTORS,
+    header: CHATGPT_HEADER_SELECTORS
+  },
+  citationSelectors: CHATGPT_CITATION_SELECTORS,
   fallbackRoleByOrder: true
 };
 
@@ -277,7 +315,6 @@ export function createDefaultAdapterHealth(reason = "Waiting for ChatGPT page st
     userCount: 0,
     assistantCount: 0,
     canAnchor: false,
-    tokenTextAvailable: false,
     source: "built-in"
   };
 }
@@ -288,7 +325,7 @@ export function normalizeCompatRulesPayload(value: unknown): ChatGptDomRule[] {
   }
 
   const payload = value as Partial<ChatGptCompatRulesPayload>;
-  if (payload.schemaVersion !== 1 || !Array.isArray(payload.rules)) {
+  if ((payload.schemaVersion !== 1 && payload.schemaVersion !== 2) || !Array.isArray(payload.rules)) {
     return [];
   }
 
@@ -304,8 +341,7 @@ export function createChatGptAdapter(remoteRules: ChatGptDomRule[] = []): ChatGp
     id: "chatgpt",
     label: "ChatGPT",
     matches: (host) => CHATGPT_HOSTS.has(host),
-    collect: () => collectWithRules(rules),
-    detectModelLabel: () => detectModelLabelWithRules(rules)
+    collect: () => collectWithRules(rules)
   };
 }
 
@@ -325,7 +361,6 @@ function normalizeRemoteRule(rule: Partial<ChatGptDomRule>, index: number): Chat
     source: "remote",
     messageSelectors: messageSelectors.length ? messageSelectors : CURRENT_CHATGPT_RULE.messageSelectors,
     turnSelectors: turnSelectors.length ? turnSelectors : CURRENT_CHATGPT_RULE.turnSelectors,
-    modelSelectors: sanitizeSelectors(rule.modelSelectors, CURRENT_CHATGPT_RULE.modelSelectors),
     supplementalSelectors: sanitizeSelectors(rule.supplementalSelectors, CURRENT_CHATGPT_RULE.supplementalSelectors),
     supplementalExcludeSelectors: sanitizeSelectors(
       rule.supplementalExcludeSelectors,
@@ -335,6 +370,12 @@ function normalizeRemoteRule(rule: Partial<ChatGptDomRule>, index: number): Chat
     textIgnoredSelectors: sanitizeSelectors(rule.textIgnoredSelectors, DEFAULT_TEXT_IGNORED_SELECTORS),
     userHints: sanitizeHints(rule.userHints, CURRENT_CHATGPT_RULE.userHints),
     assistantHints: sanitizeHints(rule.assistantHints, CURRENT_CHATGPT_RULE.assistantHints),
+    layoutSelectors: {
+      sidebar: sanitizeSelectors(rule.layoutSelectors?.sidebar, CURRENT_CHATGPT_RULE.layoutSelectors?.sidebar),
+      composer: sanitizeSelectors(rule.layoutSelectors?.composer, CURRENT_CHATGPT_RULE.layoutSelectors?.composer),
+      header: sanitizeSelectors(rule.layoutSelectors?.header, CURRENT_CHATGPT_RULE.layoutSelectors?.header)
+    },
+    citationSelectors: sanitizeSelectors(rule.citationSelectors, CURRENT_CHATGPT_RULE.citationSelectors),
     fallbackRoleByOrder: Boolean(rule.fallbackRoleByOrder)
   };
 }
@@ -663,8 +704,6 @@ function getCollectScore(result: InternalCollectResult): number {
 
 function createHealth(result: InternalCollectResult, supplementalContexts: SupplementalContext[]): AdapterHealth {
   const canAnchor = result.messages.every((message) => message.element instanceof HTMLElement);
-  const tokenTextAvailable = result.messages.some((message) => message.text.length > 0) ||
-    supplementalContexts.some((context) => context.text.length > 0);
   const missingRole = result.userCount === 0 || result.assistantCount === 0;
   const builtInFallback = result.rule.source === "built-in" && result.rule.id !== CURRENT_CHATGPT_RULE.id;
   const degraded = result.usedFallbackRoles || missingRole || builtInFallback;
@@ -679,7 +718,6 @@ function createHealth(result: InternalCollectResult, supplementalContexts: Suppl
     userCount: result.userCount,
     assistantCount: result.assistantCount,
     canAnchor,
-    tokenTextAvailable,
     source: result.rule.source
   };
 }
@@ -947,90 +985,6 @@ function compactSupplementalContexts(contexts: SupplementalContext[]): Supplemen
   }
 
   return compacted;
-}
-
-function detectModelLabelWithRules(rules: ChatGptDomRule[]): string {
-  let best: { label: string; score: number } | null = null;
-  const selectors = uniqueStrings(rules.flatMap((rule) => rule.modelSelectors));
-
-  for (const selector of selectors) {
-    for (const element of safeQueryAll(selector)) {
-      if (!isVisibleElement(element) || element.closest(`#${ROOT_ID}`)) {
-        continue;
-      }
-
-      const textValues = [
-        element.innerText,
-        element.getAttribute("aria-label"),
-        element.getAttribute("title")
-      ].filter(Boolean) as string[];
-
-      for (const rawText of textValues) {
-        const label = normalizeDetectedChatGptModelLabel(rawText);
-        if (!label) {
-          continue;
-        }
-
-        const rawNormalized = normalizeText(rawText);
-        const modelishAttributes = `${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`;
-        if (/^Pro$/i.test(rawNormalized) && !element.closest("form, main") && !/model|gpt/i.test(modelishAttributes)) {
-          continue;
-        }
-
-        const score = scoreModelCandidate(element, label, rawText);
-        if (!best || score > best.score) {
-          best = { label, score };
-        }
-      }
-    }
-  }
-
-  return best?.label ?? "";
-}
-
-function normalizeDetectedChatGptModelLabel(value: string): string {
-  const text = normalizeText(value)
-    .replace(/\b(current model|selected model|model selector|选择模型|当前模型)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const match = text.match(/\b(?:GPT\s*[- ]?\s*\d+(?:\.\d+)?|gpt\s*[- ]?\s*\d+(?:\.\d+)?|o\d(?:\s*[- ]?\s*mini)?)(?:\s*[- ]?\s*(?:Instant|Thinking|Pro|Mini|Nano|Chat))?\b/i);
-  if (!match?.[0]) {
-    return "";
-  }
-
-  return match[0]
-    .replace(/\s+/g, " ")
-    .replace(/\bgpt\b/i, "GPT")
-    .replace(/\bo(\d)/i, "o$1")
-    .replace(/\binstant\b/i, "Instant")
-    .replace(/\bthinking\b/i, "Thinking")
-    .replace(/\bpro\b/i, "Pro")
-    .replace(/\bmini\b/i, "Mini")
-    .replace(/\bnano\b/i, "Nano")
-    .replace(/\bchat\b/i, "Chat")
-    .trim();
-}
-
-function scoreModelCandidate(element: HTMLElement, normalizedLabel: string, rawText: string): number {
-  const text = normalizeText(rawText);
-  let score = 0;
-  if (/gpt|model/i.test(`${element.getAttribute("data-testid") || ""} ${element.getAttribute("aria-label") || ""}`)) {
-    score += 18;
-  }
-  if (text.length <= 40) {
-    score += 10;
-  }
-  if (element.closest("form, main")) {
-    score += 12;
-  }
-  if (element.matches("button, [role='button']")) {
-    score += 8;
-  }
-  if (/Thinking|Pro/.test(normalizedLabel)) {
-    score += 6;
-  }
-
-  return score - Math.max(0, text.length - 32);
 }
 
 function extractVisibleText(

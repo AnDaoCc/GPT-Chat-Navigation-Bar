@@ -1,33 +1,138 @@
 export const STORAGE_SETTINGS_KEY = "conversationNavigator:settings";
-export const TOKEN_COUNT_BATCH_MESSAGE = "conversationNavigator:countTokensBatch";
 export const LIBRARY_STORAGE_KEY = "conversationNavigator:library:v1";
 export const MATERIALS_LIST_MESSAGE = "conversationNavigator:materials:list";
 export const SELECTION_GET_MESSAGE = "conversationNavigator:selection:get";
 export const EXPORT_SNAPSHOT_MESSAGE = "conversationNavigator:export:snapshot";
 export const PAGE_STATUS_MESSAGE = "conversationNavigator:pageStatus";
+export const PAGE_COMMAND_MESSAGE = "conversationNavigator:pageCommand";
+export const CITATION_CHECK_MESSAGE = "conversationNavigator:citations:check";
+export const CITATION_PERMISSION_MESSAGE = "conversationNavigator:citations:permission";
+export const EXPORT_PREFERENCES_STORAGE_KEY = "conversationNavigator:exportPreferences:v2";
+export const CITATION_STATE_STORAGE_KEY = "conversationNavigator:citationState:v1";
 
 export type AppLanguage = "zh-CN" | "zh-TW" | "en";
-export type TokenBudgetMode = "model" | "manual";
 export type AdapterHealthStatus = "ok" | "degraded" | "unsupported";
 export type CompatRulesSource = "built-in" | "remote";
 export type LibraryItemKind = "prompt" | "code" | "selection";
+export type ReadingToolPanel = "focus" | "export" | "citations";
+export type DrawerMode = "auto" | "dock" | "overlay";
+export type ExportDocumentFormat = "md" | "html" | "docx";
+export type ExportContentBlockKind =
+  | "heading"
+  | "paragraph"
+  | "list"
+  | "code"
+  | "table"
+  | "image"
+  | "attachment";
+export type CitationCheckStatus =
+  | "unchecked"
+  | "checking"
+  | "reachable"
+  | "missing"
+  | "restricted"
+  | "temporary-error"
+  | "blocked";
+export type CitationCheckReason = "unsafe-url" | "permission-required";
 
-export interface TokenCountBatchItem {
+export interface PageCommandMessage {
+  type: typeof PAGE_COMMAND_MESSAGE;
+  command: "open" | "close" | "toggle";
+  panel?: ReadingToolPanel;
+}
+
+export interface ExportContentBlock {
   id: string;
+  messageId: string;
+  role: "user" | "assistant";
+  kind: ExportContentBlockKind;
   text: string;
+  order: number;
+  level?: number;
+  language?: string;
+  filename?: string;
+  rows?: string[][];
+  sourceUrl?: string;
+  sourceLabel?: string;
 }
 
-export interface TokenCountBatchRequest {
-  type: typeof TOKEN_COUNT_BATCH_MESSAGE;
-  sessionId: string;
-  items: TokenCountBatchItem[];
+export interface SelectiveExportMessage extends ExportChatMessage {
+  blocks: ExportContentBlock[];
 }
 
-export interface TokenCountBatchResponse {
-  ok: boolean;
-  sessionId?: string;
-  counts?: Array<{ id: string; count: number }>;
-  error?: string;
+export interface SelectiveExportSnapshot extends Omit<ExportSnapshot, "messages"> {
+  messages: SelectiveExportMessage[];
+  citations: CitationRecord[];
+}
+
+export interface SelectiveExportPreferences {
+  schemaVersion: 2;
+  format: ExportDocumentFormat;
+  includeSourceMeta: boolean;
+  includeExportedAt: boolean;
+  includeModel: boolean;
+  filterShortMessages: boolean;
+  mergeAdjacentAnswers: boolean;
+  generateToc: boolean;
+}
+
+export const DEFAULT_SELECTIVE_EXPORT_PREFERENCES: SelectiveExportPreferences = {
+  schemaVersion: 2,
+  format: "docx",
+  includeSourceMeta: false,
+  includeExportedAt: false,
+  includeModel: false,
+  filterShortMessages: false,
+  mergeAdjacentAnswers: false,
+  generateToc: false
+};
+
+export function normalizeSelectiveExportPreferences(value: unknown): SelectiveExportPreferences {
+  const input = value && typeof value === "object" ? value as Partial<SelectiveExportPreferences> : {};
+  const format: ExportDocumentFormat = input.format === "html" || input.format === "md" ? input.format : "docx";
+  return {
+    schemaVersion: 2,
+    format,
+    includeSourceMeta: Boolean(input.includeSourceMeta),
+    includeExportedAt: Boolean(input.includeExportedAt),
+    includeModel: Boolean(input.includeModel),
+    filterShortMessages: Boolean(input.filterShortMessages),
+    mergeAdjacentAnswers: Boolean(input.mergeAdjacentAnswers),
+    generateToc: Boolean(input.generateToc)
+  };
+}
+
+export interface CitationOccurrence {
+  href: string;
+  messageId: string;
+  blockId: string;
+  excerpt: string;
+}
+
+export interface CitationRecord {
+  id: string;
+  href: string;
+  canonicalUrl: string;
+  title: string;
+  domain: string;
+  messageId: string;
+  blockId: string;
+  excerpt: string;
+  occurrenceCount: number;
+  occurrences: CitationOccurrence[];
+  openedAt: number;
+  checkStatus: CitationCheckStatus;
+  checkReason?: CitationCheckReason;
+  statusCode?: number;
+  checkedAt?: number;
+}
+
+export interface CitationCheckResult {
+  url: string;
+  status: CitationCheckStatus;
+  reason?: CitationCheckReason;
+  statusCode?: number;
+  checkedAt: number;
 }
 
 export interface LibraryItem {
@@ -95,9 +200,6 @@ export interface ExportNavigatorNode {
   answerSummary: string;
   groupLabel: string;
   turnIndex: number;
-  promptTokens: number;
-  answerTokens: number;
-  totalTokens: number;
 }
 
 export interface ExportSnapshot {
@@ -108,6 +210,7 @@ export interface ExportSnapshot {
   messages: ExportChatMessage[];
   codeBlocks: ExportCodeBlock[];
   nodes: ExportNavigatorNode[];
+  exportPreferences?: SelectiveExportPreferences;
 }
 
 export interface PageAdapterHealth {
@@ -134,18 +237,15 @@ export interface NavigatorSettings {
   chatLayoutVersion: 2;
   chatContentWidth: number;
   threadResizeEnabled: boolean;
-  tokenPanelEnabled: boolean;
-  tokenPanelCollapsed: boolean;
-  tokenBudgetMode: TokenBudgetMode;
-  tokenModelId: string;
-  manualTokenBudget: number;
-  tokenHudX: number;
-  tokenHudY: number;
   compatRulesRemoteEnabled: boolean;
   compatRulesAutoSyncEnabled: boolean;
   compatRulesLastSyncAt: number;
   compatRulesSource: CompatRulesSource;
   navigateAnimationEnabled: boolean;
+  drawerMode: DrawerMode;
+  uiMotionEnabled: boolean;
+  focusHideChrome: boolean;
+  focusCollapseOtherTurns: boolean;
 }
 
 export const DEFAULT_SETTINGS: NavigatorSettings = {
@@ -161,18 +261,15 @@ export const DEFAULT_SETTINGS: NavigatorSettings = {
   chatLayoutVersion: 2,
   chatContentWidth: 60,
   threadResizeEnabled: false,
-  tokenPanelEnabled: true,
-  tokenPanelCollapsed: false,
-  tokenBudgetMode: "model",
-  tokenModelId: "chatgpt-auto",
-  manualTokenBudget: 128000,
-  tokenHudX: 0,
-  tokenHudY: 0,
   compatRulesRemoteEnabled: false,
   compatRulesAutoSyncEnabled: true,
   compatRulesLastSyncAt: 0,
   compatRulesSource: "built-in",
-  navigateAnimationEnabled: true
+  navigateAnimationEnabled: true,
+  drawerMode: "auto",
+  uiMotionEnabled: true,
+  focusHideChrome: true,
+  focusCollapseOtherTurns: true
 };
 
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -187,8 +284,10 @@ export function clampNumber(value: unknown, min: number, max: number, fallback: 
 export function normalizeSettings(value: Partial<NavigatorSettings> | undefined): NavigatorSettings {
   const language: AppLanguage =
     value?.language === "zh-TW" || value?.language === "en" ? value.language : "zh-CN";
-  const tokenBudgetMode: TokenBudgetMode = value?.tokenBudgetMode === "manual" ? "manual" : "model";
   const compatRulesSource: CompatRulesSource = value?.compatRulesSource === "remote" ? "remote" : "built-in";
+  const drawerMode: DrawerMode = value?.drawerMode === "dock" || value?.drawerMode === "overlay"
+    ? value.drawerMode
+    : "auto";
   const isCurrentLayout = value?.chatLayoutVersion === 2;
 
   return {
@@ -204,20 +303,15 @@ export function normalizeSettings(value: Partial<NavigatorSettings> | undefined)
     chatLayoutVersion: 2,
     chatContentWidth: clampNumber(isCurrentLayout ? value?.chatContentWidth : undefined, 60, 100, 60),
     threadResizeEnabled: Boolean(value?.threadResizeEnabled),
-    tokenPanelEnabled: value?.tokenPanelEnabled !== false,
-    tokenPanelCollapsed: Boolean(value?.tokenPanelCollapsed),
-    tokenBudgetMode,
-    tokenModelId: typeof value?.tokenModelId === "string" && value.tokenModelId.trim()
-      ? value.tokenModelId.trim().slice(0, 80)
-      : "chatgpt-auto",
-    manualTokenBudget: Math.round(clampNumber(value?.manualTokenBudget, 8000, 2000000, 128000)),
-    tokenHudX: Math.round(clampNumber(value?.tokenHudX, 0, 10000, 0)),
-    tokenHudY: Math.round(clampNumber(value?.tokenHudY, 0, 10000, 0)),
     compatRulesRemoteEnabled: Boolean(value?.compatRulesRemoteEnabled),
     compatRulesAutoSyncEnabled: value?.compatRulesAutoSyncEnabled !== false,
     compatRulesLastSyncAt: Math.round(clampNumber(value?.compatRulesLastSyncAt, 0, Number.MAX_SAFE_INTEGER, 0)),
     compatRulesSource: value?.compatRulesRemoteEnabled ? compatRulesSource : "built-in",
-    navigateAnimationEnabled: value?.navigateAnimationEnabled !== false
+    navigateAnimationEnabled: value?.navigateAnimationEnabled !== false,
+    drawerMode,
+    uiMotionEnabled: value?.uiMotionEnabled !== false,
+    focusHideChrome: value?.focusHideChrome !== false,
+    focusCollapseOtherTurns: value?.focusCollapseOtherTurns !== false
   };
 }
 

@@ -1,21 +1,16 @@
 {
   "manifest_version": 3,
   "name": "GPT页面增强工具",
-  "version": "2026.9.0",
-  "version_name": "2026-V9正式版",
+  "version": "2026.10.0",
+  "version_name": "2026-V10正式版",
   "minimum_chrome_version": "114",
-  "description": "GPT页面增强工具：为 ChatGPT 增加本地阅读显示、Token 估算、文档导出、素材收藏和复制工具。",
+  "description": "GPT页面增强工具：为 ChatGPT 增加专注阅读、选择性导出、引用管理、排版与素材工具。",
   "permissions": ["storage", "clipboardWrite"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
-    "https://raw.githubusercontent.com/AnDaoCc/GPT-/main/model-catalog.json",
-    "https://raw.githubusercontent.com/AnDaoCc/GPT-Chat-Navigation-Bar/main/compat/chatgpt-dom-rules.json",
-    "https://developers.openai.com/*",
-    "https://platform.openai.com/docs/models*",
-    "https://platform.openai.com/docs/deprecations*",
-    "https://openai.com/index/*",
-    "https://help.openai.com/en/articles/*"
+    "https://raw.githubusercontent.com/AnDaoCc/GPT-Chat-Navigation-Bar/main/compat/chatgpt-dom-rules.json"
   ],
   "icons": {
     "16": "assets/icon16.png",

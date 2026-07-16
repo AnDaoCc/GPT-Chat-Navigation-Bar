@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "updatedAt": "2026-07-12",
+  "schemaVersion": 2,
+  "updatedAt": "2026-07-16",
   "rules": [
     {
       "id": "chatgpt-current-2026-07-remote",
@@ -31,16 +31,6 @@
         "main [data-message-author-role]",
         "article[data-testid*=\"conversation-turn\" i]",
         "[data-testid*=\"conversation-turn\" i]"
-      ],
-      "modelSelectors": [
-        "[data-testid*=\"model\" i]",
-        "[aria-label*=\"model\" i]",
-        "[aria-label*=\"GPT\" i]",
-        "main form button",
-        "form button",
-        "header button",
-        "button",
-        "[role=\"button\"]"
       ],
       "supplementalSelectors": [
         "[data-testid*=\"canvas\" i]",
@@ -133,6 +123,31 @@
       ],
       "userHints": ["user", "human", "prompt", "query", "request"],
       "assistantHints": ["assistant", "model", "response", "answer", "chatgpt"],
+      "layoutSelectors": {
+        "sidebar": [
+          "nav[aria-label*=\"Chat\" i]",
+          "aside[data-testid*=\"sidebar\" i]",
+          "[data-testid*=\"sidebar\" i]",
+          "[class*=\"sidebar\" i]"
+        ],
+        "composer": [
+          "form[data-type=\"unified-composer\"]",
+          "[data-testid*=\"composer\" i]",
+          "#prompt-textarea",
+          "form:has(#prompt-textarea)"
+        ],
+        "header": [
+          "header[data-testid*=\"header\" i]",
+          "main#main > header",
+          "[data-testid=\"model-switcher-dropdown-button\"]"
+        ]
+      },
+      "citationSelectors": [
+        "a[href^=\"http://\"]",
+        "a[href^=\"https://\"]",
+        "[data-testid*=\"citation\" i] a[href]",
+        "[data-testid*=\"source\" i] a[href]"
+      ],
       "fallbackRoleByOrder": true
     }
   ]

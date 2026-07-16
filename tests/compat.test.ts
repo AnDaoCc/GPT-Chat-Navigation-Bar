@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import {
+  CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR,
+  CHATGPT_MESSAGE_NODE_SELECTOR,
+  CHATGPT_USER_MESSAGE_NODE_SELECTOR,
   createChatGptAdapter,
   normalizeCompatRulesPayload
 } from "../src/chatGptAdapter";
@@ -129,6 +133,44 @@ test("current adapter recognizes nested author markers and message ids", () => {
   assert.deepEqual(result.messages.map((message) => message.role), ["user", "assistant"]);
 });
 
+test("streaming role selectors match refreshed messages before adapter markers exist", () => {
+  installDom(`
+    <main id="main">
+      <section id="legacy-user" data-message-author-role="user">Legacy user</section>
+      <section id="author-role-user" data-author-role="user">Author role user</section>
+      <section id="author-assistant" data-author="assistant">Author assistant</section>
+      <section id="role-assistant" data-role="assistant">Role assistant</section>
+      <section id="turn-assistant" data-turn="assistant">First streaming token</section>
+      <section id="testid-assistant" data-testid="assistant-message">Test id assistant</section>
+    </main>
+  `);
+
+  const userNodes = Array.from(document.querySelectorAll(CHATGPT_USER_MESSAGE_NODE_SELECTOR));
+  const assistantNodes = Array.from(document.querySelectorAll(CHATGPT_ASSISTANT_MESSAGE_NODE_SELECTOR));
+  const allMessageNodes = Array.from(document.querySelectorAll(CHATGPT_MESSAGE_NODE_SELECTOR));
+
+  assert.deepEqual(userNodes.map((node) => node.id), ["legacy-user", "author-role-user"]);
+  assert.deepEqual(assistantNodes.map((node) => node.id), [
+    "author-assistant",
+    "role-assistant",
+    "turn-assistant",
+    "testid-assistant"
+  ]);
+  assert.equal(allMessageNodes.length, 6);
+  assert.ok(allMessageNodes.every((node) => !node.hasAttribute("data-cnav-message-role")));
+});
+
+test("chat typography applies the configured size directly instead of inheriting ChatGPT defaults", () => {
+  const source = readFileSync(new URL("../src/contentScript.tsx", import.meta.url), "utf8");
+  const rule = source.match(
+    /main \$\{CHATGPT_MESSAGE_STYLE_SELECTOR\} :where\([^}]+\) \{([\s\S]*?)\n    \}/
+  );
+
+  assert.ok(rule?.[1], "chat descendant typography rule should exist");
+  assert.match(rule[1], /font-size: var\(--cnav-chat-font-size, 1rem\) !important/);
+  assert.doesNotMatch(rule[1], /font-size:\s*inherit/);
+});
+
 test("refreshed composer is not mistaken for canvas supplemental content", () => {
   installDom(`
     <main id="main">
@@ -153,6 +195,27 @@ test("invalid remote selectors are rejected", () => {
     rules: [{ id: "broken", messageSelectors: ["[broken"], turnSelectors: [] }]
   });
   assert.equal(rules.length, 0);
+});
+
+test("schema v2 compatibility rules accept layout anchors and citation selectors", () => {
+  installDom("<main></main>");
+  const rules = normalizeCompatRulesPayload({
+    schemaVersion: 2,
+    rules: [{
+      id: "v10-layout",
+      messageSelectors: ["main article"],
+      turnSelectors: ["main article"],
+      layoutSelectors: {
+        sidebar: ["nav"],
+        composer: ["form"],
+        header: ["header"]
+      },
+      citationSelectors: ["a[href^='https://']"]
+    }]
+  });
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].layoutSelectors, { sidebar: ["nav"], composer: ["form"], header: ["header"] });
+  assert.deepEqual(rules[0].citationSelectors, ["a[href^='https://']"]);
 });
 
 test("canvas supplemental content appears and disappears with the DOM", () => {
